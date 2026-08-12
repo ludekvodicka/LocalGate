@@ -1,0 +1,8 @@
+# Normalize line endings so the repo is consistent across Windows/macOS/Linux. The working copy is
+# Windows (CRLF), the published tree is LF.
+* text=auto
+
+# Paths excluded from `git archive` exports. They live in the internal SVN tree but must never ship
+# in a public release; the publish flow strips them too, this is the second line of defence.
+.aidocs/ export-ignore
+.private/ export-ignore

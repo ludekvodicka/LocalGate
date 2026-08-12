@@ -1,0 +1,52 @@
+{
+  "name": "localgate",
+  "version": "0.1.0",
+  "description": "Stable names for local dev servers: one port 80 multiplexed by Host, plus an API that can restart a dev server owned by your editor.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "ludekvodicka",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ludekvodicka/LocalGate.git"
+  },
+  "homepage": "https://github.com/ludekvodicka/LocalGate#readme",
+  "bugs": {
+    "url": "https://github.com/ludekvodicka/LocalGate/issues"
+  },
+  "keywords": [
+    "reverse-proxy",
+    "dev-server",
+    "localhost",
+    "hostname",
+    "developer-tools",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.17.0",
+  "bin": {
+    "localgate": "./bin/localgate.mjs"
+  },
+  "files": [
+    "bin",
+    "logic"
+  ],
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit",
+    "verify": "pnpm run type-check && pnpm run lint && pnpm run test"
+  },
+  "dependencies": {
+    "tsx": "4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0",
+    "eslint": "9.22.0",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.27.0",
+    "vitest": "4.1.9"
+  }
+}

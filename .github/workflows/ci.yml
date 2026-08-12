@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Windows is the current target platform: the process-tree kill behind `restart` is taskkill-based,
+# and the port-80 bind assumes Windows. A Linux/macOS job belongs here once those two are ported.
+jobs:
+  verify:
+    name: type-check + lint + tests
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4 # reads the pnpm version from package.json "packageManager"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify
+        run: pnpm run verify
+
+  # Secret scan — a post-push SAFETY NET for outside contributor PRs, NOT the primary defense. It runs
+  # AFTER a push lands, so it cannot prevent a leak; a pushed secret is already exposed and must be
+  # rotated. Its job is to catch a secret a contributor commits and block its PR from merging.
+  gitleaks:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history so the scan covers every commit, not just the PR diff
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

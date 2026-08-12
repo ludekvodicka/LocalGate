@@ -1,0 +1,39 @@
+node_modules/
+coverage/
+*.log
+.DS_Store
+
+# SVN admin dirs. This tree is also an SVN working copy (SVN is the internal system of record);
+# its .svn/ metadata must never be tracked by git or shipped to the public repo.
+.svn/
+
+# Our internal deploy descriptor. Read in place by our own tooling and kept in INTERNAL SVN, but
+# NEVER in the public git repo — a public clone has none of that toolchain.
+.axapp.json
+
+# AI workflow artifacts (plans, research, sessions, ideas). Kept in INTERNAL SVN so they travel
+# with the repo across our PCs, but NEVER pushed to the public repo — they carry internal
+# references and our process history. The public repo ships only docs/.
+.aidocs/
+
+# Our private publish tooling (export gate, publish script, pre-push hook, runbook) and any other
+# owner-only files. Kept in INTERNAL SVN so it syncs across our PCs, never public.
+.private/
+
+# Internal Claude Code project commands (e.g. /commit-github → the publish flow in .private/).
+# Kept in INTERNAL SVN, never public — it references tooling a public clone doesn't have.
+# Claude Code loads it from the filesystem regardless of git.
+.claude/
+
+# Our internal project instructions — SVN-first workflow, publish flow, house style. Needed by OUR
+# sessions (loaded from disk) + kept in INTERNAL SVN, but not part of the public repo: a public
+# clone uses CONTRIBUTING.md instead. (Only the repo-root ones.)
+/CLAUDE.md
+/AGENTS.md
+
+# Secrets never belong in either repo.
+.env
+.env.*
+*.local.json
+*.pem
+*.key

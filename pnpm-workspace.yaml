@@ -1,0 +1,5 @@
+# esbuild is what tsx runs on, so its install script has to run: without it there is no platform
+# binary and the CLI cannot start. pnpm refuses to decide this for us and fails the install until
+# the package is listed here.
+allowBuilds:
+  esbuild: true
