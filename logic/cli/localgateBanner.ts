@@ -1,25 +1,26 @@
 import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
+import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 
 // What a command prints once a name answers. `run` and `alias` share it because to the person reading the
 // terminal they are the same event, and the one-line variant `alias` used to print is how a shared name
 // goes unnoticed - the script that registered one then wrote its own `.localhost` block instead.
 //
-// The route is the ONLY input. The title, the column alignment and even which command to type next are
-// decided here rather than passed in, because a caller that hand-builds a padded string is a caller that
-// can drift out of format again.
+// The route and the port the proxy answers on are the ONLY inputs. The title, the column alignment and
+// even which command to type next are decided here rather than passed in, because a caller that
+// hand-builds a padded string is a caller that can drift out of format again.
 export class LocalgateBanner
 {
   private static readonly labelWidthConst = 11;
 
-  static render(route: LocalgateRoute): string
+  static render(route: LocalgateRoute, proxyPort: number): string
   {
     const [local, shared] = route.names;
     const [nextLabel, nextCommand] = LocalgateBanner.next(route);
 
     const lines = ["", `  localgate   ${LocalgateBanner.appName(route)}   ·   ${LocalgateBanner.subtitle(route)}`, ""];
 
-    if (shared) lines.push(LocalgateBanner.row("shared", `http://${shared}`));
-    lines.push(LocalgateBanner.row("local", `http://${local}`));
+    if (shared) lines.push(LocalgateBanner.row("shared", LocalgateUrl.forName(shared, proxyPort)));
+    lines.push(LocalgateBanner.row("local", LocalgateUrl.forName(local, proxyPort)));
     lines.push("", LocalgateBanner.row("upstream", `127.0.0.1:${route.port}`), LocalgateBanner.row(nextLabel, nextCommand), "");
 
     return `${lines.join("\n")}\n`;

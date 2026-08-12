@@ -2,15 +2,45 @@ import { execFile } from "node:child_process";
 import { connect } from "node:net";
 import { promisify } from "node:util";
 
-// Killing a dev server on Windows is not one call. `taskkill /T` walks parent links, so when the
-// intermediate shell npm spawned has already exited, the real server is an orphan the tree walk cannot
-// see - it survives and keeps the port. That is the failure `portless prune` exists to clean up after.
-// So: kill the tree, wait for the port to actually come free, and if it does not, find whoever still
-// holds it and kill that process directly.
+export type LocalgateKillSpec =
+  | { via: "command"; file: string; args: string[] }
+  | { via: "signal"; target: number };
+
+// Killing a dev server is not one call on either platform, and for the same reason: `npm run dev` spawns
+// a shell that spawns the real server, so the process that holds the port is not the one whose pid we
+// recorded. Windows walks parent links with `taskkill /T`, POSIX signals the process group the child was
+// made the leader of. Both miss an orphan whose parent already exited, so the port is checked afterwards
+// and whoever still holds it is killed directly.
 export class LocalgateProcessTree
 {
   private static readonly pollIntervalMsConst = 100;
   private static readonly connectTimeoutMsConst = 500;
+
+  // Pure so both branches are testable from either OS: what runs is a decision, and only the execution
+  // below is platform-bound.
+  static killSpec(pid: number, platform: NodeJS.Platform = process.platform): LocalgateKillSpec
+  {
+    if (platform == "win32") return { via: "command", file: "taskkill", args: ["/T", "/F", "/PID", String(pid)] };
+
+    // The negative pid is the process group. The child is spawned detached precisely so that it leads
+    // one, which is what reaches the shell's children instead of only the shell.
+    return { via: "signal", target: -pid };
+  }
+
+  static portHolderCommand(port: number, platform: NodeJS.Platform = process.platform): { file: string; args: string[] }
+  {
+    if (platform == "win32")
+      return {
+        file: "powershell",
+        args: [
+          "-NoProfile",
+          "-Command",
+          `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`
+        ]
+      };
+
+    return { file: "lsof", args: ["-ti", `tcp:${port}`, "-sTCP:LISTEN"] };
+  }
 
   static async killTree(pid: number, port: number, timeoutMs = 10_000): Promise<void>
   {
@@ -27,8 +57,8 @@ export class LocalgateProcessTree
   }
 
   // For a process nobody owns any more. The recorded pid belongs to something that already exited and
-  // Windows reuses pid numbers, so killing it blind can take out an unrelated tree; whoever actually
-  // holds the port is the only target that is still known to be the right one.
+  // both platforms reuse pid numbers, so killing it blind can take out an unrelated tree; whoever
+  // actually holds the port is the only target that is still known to be the right one.
   static async killPortHolder(port: number, timeoutMs = 10_000): Promise<boolean>
   {
     const holder = await LocalgateProcessTree.findPortHolder(port);
@@ -69,32 +99,31 @@ export class LocalgateProcessTree
 
   static async findPortHolder(port: number): Promise<number | null>
   {
-    if (process.platform != "win32") return null;
+    const { file, args } = LocalgateProcessTree.portHolderCommand(port);
 
     try
     {
-      const { stdout } = await promisify(execFile)("powershell", [
-        "-NoProfile",
-        "-Command",
-        `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`
-      ]);
-
-      const pid = Number.parseInt(stdout.trim(), 10);
+      const { stdout } = await promisify(execFile)(file, args);
+      // lsof prints one pid per line and can name several; the listener is the first.
+      const pid = Number.parseInt(stdout.trim().split(/\r?\n/)[0] ?? "", 10);
       return Number.isFinite(pid) && pid > 0 ? pid : null;
     }
     catch
     {
+      // No holder, or no lsof on this machine. Both mean the same to every caller: nothing to kill here.
       return null;
     }
   }
 
   private static async killPid(pid: number): Promise<void>
   {
-    if (process.platform == "win32")
+    const spec = LocalgateProcessTree.killSpec(pid);
+
+    if (spec.via == "command")
     {
       try
       {
-        await promisify(execFile)("taskkill", ["/T", "/F", "/PID", String(pid)]);
+        await promisify(execFile)(spec.file, spec.args);
       }
       catch
       {
@@ -102,14 +131,28 @@ export class LocalgateProcessTree
       }
       return;
     }
-
-    try
+    else if (spec.via == "signal")
     {
-      process.kill(pid, "SIGKILL");
+      try
+      {
+        process.kill(spec.target, "SIGKILL");
+      }
+      catch
+      {
+        // A child that was never detached leads no group, so the group signal finds nothing. Falling
+        // back to the pid itself still ends the process we were asked to end.
+        try
+        {
+          process.kill(Math.abs(spec.target), "SIGKILL");
+        }
+        catch
+        {
+          // Same as above.
+        }
+      }
+      return;
     }
-    catch
-    {
-      // Same as above.
-    }
+    else
+      throw new Error(`Unknown kill spec: ${JSON.stringify(spec)}`);
   }
 }

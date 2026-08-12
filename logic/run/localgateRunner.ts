@@ -9,6 +9,7 @@ import { LocalgateProxyClient } from "../client/localgateProxyClient.ts";
 import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
 import { LocalgateProjectConfig, type LocalgateProjectSettings } from "../config/localgateProjectConfig.ts";
 import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
+import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateEnvRewrite } from "./localgateEnvRewrite.ts";
 import { LocalgateProcessTree } from "./localgateProcessTree.ts";
 
@@ -150,7 +151,7 @@ export class LocalgateRunner
     });
     this.route = route;
 
-    process.stdout.write(LocalgateBanner.render(route));
+    process.stdout.write(LocalgateBanner.render(route, LocalgateProxyClient.proxyPort()));
 
     this.installSignalHandlers();
     const heartbeat = this.startHeartbeat();
@@ -205,7 +206,8 @@ export class LocalgateRunner
 
       if (!await LocalgateRunner.askTakeover())
       {
-        process.stdout.write(`localgate: left it running. Reach it at http://${existing.names[0]}\n`);
+        process.stdout.write("localgate: left it running. Reach it at "
+          + `${LocalgateUrl.forName(existing.names[0], LocalgateProxyClient.proxyPort())}\n`);
         return 1;
       }
     }
@@ -298,16 +300,22 @@ export class LocalgateRunner
     const scripts = LocalgateRunner.readScripts(packageDirectory);
     const command = LocalgateRunner.withPortFlag(this.command, scripts, port);
 
-    const env = LocalgateEnvRewrite.apply(process.env, external);
+    const env = LocalgateEnvRewrite.apply(process.env, external, LocalgateProxyClient.proxyPort());
     env.PORT = String(port);
 
     // One command string rather than a command plus an args array: `npm run dev` on Windows is a .cmd,
     // which node refuses to spawn without a shell, and passing an args array alongside `shell: true`
     // triggers DEP0190 because the shell concatenates them anyway. Quoting here makes that explicit.
+    //
+    // `detached` off Windows makes the child lead its own process group, which is the only way to reach
+    // the dev server the shell spawns underneath it: signalling the shell alone leaves the server
+    // running and holding the port. On Windows the same flag would hand the child its own console
+    // instead, and `taskkill /T` already walks the tree, so it stays off there.
     const child = spawn(LocalgateRunner.shellCommand(command), {
       cwd: this.directory,
       env,
       shell: true,
+      detached: process.platform != "win32",
       stdio: ["inherit", "pipe", "pipe"]
     });
 

@@ -3,13 +3,15 @@ import { LocalgateCloudflareInfo } from "./localgateCloudflareInfo.ts";
 
 describe("LocalgateCloudflareInfo", () =>
 {
-  const text = LocalgateCloudflareInfo.render("web.dev.example.com", "192.0.2.10");
+  const text = LocalgateCloudflareInfo.render("web.dev.example.com", "192.0.2.10", 80);
 
   it("prints the DNS record and the ingress entry ready to paste", () =>
   {
     expect(text).toContain("web.dev.example.com   CNAME   <tunnel-id>.cfargotunnel.com");
     expect(text).toContain("- hostname: web.dev.example.com");
     expect(text).toContain("service: http://192.0.2.10:80");
+    expect(LocalgateCloudflareInfo.render("web.dev.example.com", "192.0.2.10", 8_080))
+      .toContain("service: http://192.0.2.10:8080");
   });
 
   it("states both consequences and that nothing was sent", () =>

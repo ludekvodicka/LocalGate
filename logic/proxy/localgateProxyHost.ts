@@ -1,4 +1,5 @@
 import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
+import { LocalgateUrl } from "./localgateUrl.ts";
 import { LocalgateControlApi } from "./localgateControlApi.ts";
 import { LocalgateHealth } from "./localgateHealth.ts";
 import { LocalgateProxy } from "./localgateProxy.ts";
@@ -8,12 +9,12 @@ import { LocalgateRegistry, type LocalgateRoute } from "./localgateRegistry.ts";
 // once the last route disappears, so nothing is installed and nothing runs when no dev server does.
 export class LocalgateProxyHost
 {
-  static readonly portConst = 80;
   private static readonly gracePeriodMsConst = 20_000;
 
   static async run(): Promise<void>
   {
     const machine = LocalgateMachineConfig.load();
+    const port = LocalgateUrl.proxyPort(machine);
     const registry = new LocalgateRegistry();
     const health = new LocalgateHealth(registry, machine?.autoRestart === true, LocalgateProxyHost.requestRestart);
 
@@ -22,7 +23,7 @@ export class LocalgateProxyHost
       health,
       new LocalgateControlApi(registry, () => proxy.checkIdle()),
       {
-        port: LocalgateProxyHost.portConst,
+        port,
         lanIp: machine?.lanIp ?? null,
         externalSuffix: machine ? LocalgateMachineConfig.externalSuffix(machine) : null,
         gracePeriodMs: LocalgateProxyHost.gracePeriodMsConst,
@@ -35,8 +36,8 @@ export class LocalgateProxyHost
     );
 
     await proxy.start();
-    process.stdout.write(`localgate proxy listening on 127.0.0.1:${LocalgateProxyHost.portConst}`
-      + `${machine?.lanIp ? ` and ${machine.lanIp}:${LocalgateProxyHost.portConst}` : ""}\n`);
+    process.stdout.write(`localgate proxy listening on 127.0.0.1:${port}`
+      + `${machine?.lanIp ? ` and ${machine.lanIp}:${port}` : ""}\n`);
 
     for (const signal of ["SIGINT", "SIGTERM"] as const)
       process.on(signal, () => void proxy.stop().then(() => process.exit(0)));

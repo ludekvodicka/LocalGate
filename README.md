@@ -5,12 +5,9 @@ Stable names for local dev servers.
 [![CI](https://github.com/ludekvodicka/LocalGate/actions/workflows/ci.yml/badge.svg)](https://github.com/ludekvodicka/LocalGate/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **Windows only today.** The process-tree kill behind `restart` is written for Windows, and the
-> port-80 bind assumes it. See [Status](#status).
-
-One reverse proxy on port 80 multiplexes every dev server on the machine by `Host` header, so each app
-gets a name instead of a port: `myapp.localhost` locally, and optionally `myapp.<label>.<your-domain>`
-so a colleague on the LAN can open it too.
+One reverse proxy multiplexes every dev server on the machine by `Host` header, so each app gets a name
+instead of a port: `myapp.localhost` locally, and optionally `myapp.<label>.<your-domain>` so a
+colleague on the LAN can open it too.
 
 It also owns the dev process it starts, which is the part editors cannot give you: `localgate restart`
 restarts the server running inside your editor's debug terminal, without stealing the route or the
@@ -29,7 +26,7 @@ localgate status --json       # machine-readable state
 ## How it routes
 
 Every dev server binds an ephemeral loopback port and registers its name. The proxy routes by the
-`Host` header, so nothing else has to listen on 80.
+`Host` header, so it is the only thing that has to listen on a fixed port.
 
 ```mermaid
 flowchart LR
@@ -37,7 +34,7 @@ flowchart LR
     lan["the LAN"] -->|"lan: myapp.dev.example.com"| proxy
     net["a tunnel"] -->|"internet: same name"| proxy
 
-    proxy["localgate :80"]
+    proxy["localgate proxy"]
 
     proxy --> app1["myapp :41000"]
     proxy --> app2["docs :41001"]
@@ -45,8 +42,8 @@ flowchart LR
 ```
 
 The tunnel is not localgate's - it is whatever you already run, pointed at this machine's LAN address
-on port 80. It keeps the `Host` header, so a request arriving through it is routed exactly like a LAN
-request and localgate needs to know nothing about it.
+on the proxy's port. It keeps the `Host` header, so a request arriving through it is routed exactly
+like a LAN request and localgate needs to know nothing about it.
 
 The table lives in the proxy's memory. There is no config file listing apps, no port assignment to keep
 in sync, and nothing to clean up after a crash.
@@ -78,11 +75,18 @@ through a shared name, without an `allowedDevOrigins` entry in the project.
 
 ## Install
 
-Windows and Node 24+.
+Node 24+.
 
 ```bash
 npm install -g localgate
 ```
+
+On Windows the proxy binds port 80, so a name stands alone: `http://myapp.localhost`. On Linux and
+macOS everything below 1024 belongs to root, and a tool that starts itself on demand has no business
+asking for that, so it binds **8080** and the port rides along: `http://myapp.localhost:8080`. Every
+URL localgate prints already carries it. To have 80 there too, give the node binary the capability
+(`sudo setcap cap_net_bind_service=+ep $(which node)` on Linux) and set `"proxyPort": 80` in
+`~/.localgate/config.json`.
 
 Or from a clone, which is also how you develop on it:
 
@@ -278,9 +282,12 @@ build step.
 
 ## Status
 
-Early, and Windows-only for now: the process-tree kill that makes `restart`
-reliable is implemented with `taskkill`, and the port-80 bind assumes Windows' lack of privileged-port
-restrictions. The rest is plain Node and portable.
+Early. Windows, Linux and macOS: the kill that makes `restart` reliable goes through `taskkill /T` on
+Windows and the child's process group elsewhere, and the port-holder lookup is PowerShell or `lsof`.
+
+One rough edge on macOS: browsers resolve `*.localhost` to loopback by RFC 6761, but the system
+resolver does not, so `curl http://myapp.localhost:8080` and server-to-server calls by name need an
+`/etc/hosts` entry there. Browsers are fine.
 
 Bug reports and ideas are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md), and
 [SECURITY.md](SECURITY.md) for anything security-related. Licensed under

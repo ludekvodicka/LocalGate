@@ -18,6 +18,27 @@ describe("LocalgateProcessTree", () =>
     };
   };
 
+  // The platform branches decide what runs; only one of them can execute on any given machine, so what
+  // is asserted here is the decision. Getting it wrong is how the POSIX side came to kill a single pid
+  // and look up nothing at all.
+  it("kills the process tree on Windows and the process group elsewhere", () =>
+  {
+    expect(LocalgateProcessTree.killSpec(4_544, "win32"))
+      .toEqual({ via: "command", file: "taskkill", args: ["/T", "/F", "/PID", "4544"] });
+
+    expect(LocalgateProcessTree.killSpec(4_544, "linux")).toEqual({ via: "signal", target: -4_544 });
+    expect(LocalgateProcessTree.killSpec(4_544, "darwin")).toEqual({ via: "signal", target: -4_544 });
+  });
+
+  it("asks the right tool which process holds a port", () =>
+  {
+    expect(LocalgateProcessTree.portHolderCommand(41_000, "win32").file).toBe("powershell");
+    expect(LocalgateProcessTree.portHolderCommand(41_000, "win32").args.join(" ")).toContain("-LocalPort 41000");
+
+    expect(LocalgateProcessTree.portHolderCommand(41_000, "linux"))
+      .toEqual({ file: "lsof", args: ["-ti", "tcp:41000", "-sTCP:LISTEN"] });
+  });
+
   it("sees a listening port and sees it go", async () =>
   {
     const server = await listen();

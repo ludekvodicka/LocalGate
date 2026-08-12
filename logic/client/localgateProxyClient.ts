@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { LocalgateProxyHost } from "../proxy/localgateProxyHost.ts";
+import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
+import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateRouteConflictError } from "../proxy/localgateRegistry.ts";
 import type { LocalgateRoute, LocalgateRouteRegistration } from "../proxy/localgateRegistry.ts";
 
@@ -9,14 +10,30 @@ import type { LocalgateRoute, LocalgateRouteRegistration } from "../proxy/localg
 // this client is the only way in - and it is loopback-only, which is what keeps the LAN out of it.
 export class LocalgateProxyClient
 {
-  private static readonly baseUrlConst = `http://127.0.0.1:${LocalgateProxyHost.portConst}/__localgate`;
   private static readonly startTimeoutMsConst = 15_000;
+
+  // Resolved once per process rather than per call: it reads the machine config from disk, and a
+  // long-lived runner asks for this on every heartbeat. Public because everything that prints a URL
+  // needs the same answer, and asking the one component that already talks to the proxy beats every
+  // caller loading the config for itself.
+  private static port: number | null = null;
+
+  static proxyPort(): number
+  {
+    LocalgateProxyClient.port ??= LocalgateUrl.proxyPort(LocalgateMachineConfig.load());
+    return LocalgateProxyClient.port;
+  }
+
+  private static baseUrl(): string
+  {
+    return `http://127.0.0.1:${LocalgateProxyClient.proxyPort()}/__localgate`;
+  }
 
   static async ping(): Promise<boolean>
   {
     try
     {
-      const response = await fetch(`${LocalgateProxyClient.baseUrlConst}/ping`, {
+      const response = await fetch(`${LocalgateProxyClient.baseUrl()}/ping`, {
         signal: AbortSignal.timeout(1_000)
       });
       return response.ok;
@@ -39,7 +56,7 @@ export class LocalgateProxyClient
       await new Promise(resolve => setTimeout(resolve, 150));
       if (await LocalgateProxyClient.ping()) return;
       if (Date.now() >= deadline)
-        throw new Error(`localgate proxy did not come up on port ${LocalgateProxyHost.portConst} within `
+        throw new Error(`localgate proxy did not come up on port ${LocalgateProxyClient.proxyPort()} within `
           + `${LocalgateProxyClient.startTimeoutMsConst / 1000} s (is something else holding the port?)`);
     }
   }
@@ -75,7 +92,7 @@ export class LocalgateProxyClient
       ? `name=${encodeURIComponent(selector.name)}`
       : `cwd=${encodeURIComponent(selector.directory ?? "")}`;
 
-    const response = await fetch(`${LocalgateProxyClient.baseUrlConst}/resolve?${query}`);
+    const response = await fetch(`${LocalgateProxyClient.baseUrl()}/resolve?${query}`);
     if (!response.ok) return null;
     return ((await response.json()) as { route: LocalgateRoute | null }).route;
   }
@@ -104,7 +121,7 @@ export class LocalgateProxyClient
       init.body = JSON.stringify(body);
     }
 
-    const response = await fetch(`${LocalgateProxyClient.baseUrlConst}${path}`, init);
+    const response = await fetch(`${LocalgateProxyClient.baseUrl()}${path}`, init);
 
     // A collision travels as its own type so the runner can name the process that holds the name,
     // rather than reporting a bare status code.

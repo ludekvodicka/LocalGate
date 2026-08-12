@@ -24,7 +24,7 @@ describe("LocalgateBanner", () =>
 
   it("stacks the shared name above the local one and closes with the command to type next", () =>
   {
-    const text = LocalgateBanner.render(route({}));
+    const text = LocalgateBanner.render(route({}), 80);
     const lines = text.split("\n");
     const shared = lines.findIndex(line => line.includes("shared"));
     const local = lines.findIndex(line => line.includes("local "));
@@ -37,9 +37,19 @@ describe("LocalgateBanner", () =>
     expect(text).toContain("restart    localgate restart");
   });
 
+  // On Linux and macOS the proxy cannot have 80, so every address it prints has to carry the port it
+  // actually answers on - a banner that says otherwise sends the reader somewhere empty.
+  it("writes the port into both addresses when the proxy is not on 80", () =>
+  {
+    const text = LocalgateBanner.render(route({}), 8_080);
+
+    expect(text).toContain("http://myapp.dev.example.com:8080");
+    expect(text).toContain("http://myapp.localhost:8080");
+  });
+
   it("shows one address in mode local, where no shared name exists", () =>
   {
-    const text = LocalgateBanner.render(route({ names: ["tool.localhost"], mode: "local", port: 41_000 }));
+    const text = LocalgateBanner.render(route({ names: ["tool.localhost"], mode: "local", port: 41_000 }), 80);
 
     expect(text).not.toContain("shared");
     expect(text).toContain("http://tool.localhost");
@@ -57,7 +67,7 @@ describe("LocalgateBanner", () =>
       controlUrl: null,
       runnerPid: null,
       childPid: null
-    }));
+    }), 80);
 
     expect(text).toContain("localgate   cms   ·   alias   ·   mode lan");
     expect(text).toContain("http://cms.dev.example.com");
@@ -70,7 +80,7 @@ describe("LocalgateBanner", () =>
   // caller that can drift.
   it("aligns every value into the same column, whatever the label length", () =>
   {
-    const columns = LocalgateBanner.render(route({}))
+    const columns = LocalgateBanner.render(route({}), 80)
       .split("\n")
       .filter(line => /^ {4}\S/.test(line))
       .map(line => line.indexOf(line.trim().split(/\s{2,}/)[1]));

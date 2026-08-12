@@ -12,9 +12,9 @@ worth sharing, so bug reports, ideas and patches are all welcome.
   a lot of code, so we don't both spend effort on something that won't merge.
 - **Security issues** — do **not** open a public issue; see [SECURITY.md](SECURITY.md).
 
-The most useful contribution right now is **portability**: the process-tree kill behind `restart` is
-written for Windows, and binding port 80 is a different problem on Linux and macOS. See *Status* in the
-README.
+Windows, Linux and macOS are all supported, but the two POSIX platforms are far less travelled than
+Windows, where this tool is used daily. Reports that something behaves differently there are the most
+useful thing you can send right now. See *Status* in the README for the known rough edge on macOS.
 
 ## How your changes land
 

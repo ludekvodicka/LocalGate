@@ -1,8 +1,8 @@
 # Security Policy
 
-localgate binds **port 80** and, in `lan` mode, also a LAN address, and it can **start, restart and
-kill processes** on the machine. That is enough reach to take seriously, so please disclose problems
-responsibly.
+localgate binds a **fixed port** (80 on Windows, 8080 on Linux and macOS) and, in `lan` mode, also a
+LAN address, and it can **start, restart and kill processes** on the machine. That is enough reach to
+take seriously, so please disclose problems responsibly.
 
 ## Reporting a vulnerability
 

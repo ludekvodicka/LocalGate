@@ -25,7 +25,8 @@ describe("LocalgateMachineConfig", () =>
       label: "dev",
       baseDomain: "example.com",
       lanIp: "192.0.2.10",
-      autoRestart: false
+      autoRestart: false,
+      proxyPort: null
     });
   });
 
@@ -41,6 +42,18 @@ describe("LocalgateMachineConfig", () =>
     expect(() => LocalgateMachineConfig.load(path)).toThrow(/must be a DNS label/);
   });
 
+  it("reads an optional proxy port and refuses one that is not a port", () =>
+  {
+    const withPort = writeConfig({ label: "dev", baseDomain: "example.com", lanIp: "192.0.2.10", proxyPort: 80 });
+    expect(LocalgateMachineConfig.load(withPort)?.proxyPort).toBe(80);
+
+    const without = writeConfig({ label: "dev", baseDomain: "example.com", lanIp: "192.0.2.10" });
+    expect(LocalgateMachineConfig.load(without)?.proxyPort).toBe(null);
+
+    const bad = writeConfig({ label: "dev", baseDomain: "example.com", lanIp: "192.0.2.10", proxyPort: 70_000 });
+    expect(() => LocalgateMachineConfig.load(bad)).toThrow(/"proxyPort" must be a port number/);
+  });
+
   it("rejects a missing required field", () =>
   {
     const path = writeConfig({ label: "dev", lanIp: "192.0.2.10" });
@@ -53,7 +66,8 @@ describe("LocalgateMachineConfig", () =>
       label: "dev",
       baseDomain: "example.com",
       lanIp: "192.0.2.10",
-      autoRestart: false
+      autoRestart: false,
+      proxyPort: null
     })).toBe(".dev.example.com");
   });
 });

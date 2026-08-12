@@ -6,6 +6,13 @@ describe("LocalgateRegistry", () =>
 {
   const now = "2026-08-11T10:00:00.000Z";
 
+  // Only the tests below that actually resolve a directory need a real one: `path` reads `C:\projects`
+  // on Linux as a relative segment with a colon in it, not as a root. Everywhere else the cwd is opaque
+  // data and stays as written.
+  const windows = process.platform == "win32";
+  const projectDir = (...parts: string[]) => [windows ? "C:\\projects" : "/projects", ...parts]
+    .join(windows ? "\\" : "/");
+
   const app = (names: string[], cwd: string | null, port = 41000): LocalgateRouteRegistration => ({
     names,
     port,
@@ -159,17 +166,19 @@ describe("LocalgateRegistry", () =>
   it("resolves the route owning a directory, including from a nested path", () =>
   {
     const registry = new LocalgateRegistry();
-    const route = registry.register(app(["web.localhost"], "C:\\projects\\web"), now);
+    const route = registry.register(app(["web.localhost"], projectDir("web")), now);
 
-    expect(registry.byDirectory("C:\\projects\\web")?.id).toBe(route.id);
-    expect(registry.byDirectory(join("C:\\projects\\web", "app", "blog"))?.id).toBe(route.id);
-    expect(registry.byDirectory("C:\\projects\\other")).toBe(null);
+    expect(registry.byDirectory(projectDir("web"))?.id).toBe(route.id);
+    expect(registry.byDirectory(join(projectDir("web"), "app", "blog"))?.id).toBe(route.id);
+    expect(registry.byDirectory(projectDir("other"))).toBe(null);
   });
 
   // `relative` between two drives has no relative form and returns the target unchanged, so the
   // "does not start with .." test alone said yes: every route on one drive owned every directory on
   // the other, and `run` there offered to take over an unrelated app.
-  it("never resolves a directory on another drive", () =>
+  // Drives are a Windows idea, and so is the bug: elsewhere there is no second root for a path to be
+  // wrongly resolved into.
+  it.runIf(windows)("never resolves a directory on another drive", () =>
   {
     const registry = new LocalgateRegistry();
     registry.register(app(["web.localhost"], "Q:\\projects\\web"), now);
@@ -182,10 +191,10 @@ describe("LocalgateRegistry", () =>
   it("prefers the deepest owner when projects are nested", () =>
   {
     const registry = new LocalgateRegistry();
-    registry.register(app(["outer.localhost"], "C:\\projects", 41000), now);
-    const inner = registry.register(app(["inner.localhost"], "C:\\projects\\web", 41001), now);
+    registry.register(app(["outer.localhost"], projectDir(), 41000), now);
+    const inner = registry.register(app(["inner.localhost"], projectDir("web"), 41001), now);
 
-    expect(registry.byDirectory("C:\\projects\\web\\app")?.id).toBe(inner.id);
+    expect(registry.byDirectory(projectDir("web", "app"))?.id).toBe(inner.id);
   });
 
   it("never resolves an alias by directory, because an alias owns no working copy", () =>

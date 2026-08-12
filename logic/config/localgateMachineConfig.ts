@@ -8,6 +8,9 @@ export type LocalgateMachineSettings =
   baseDomain: string;
   lanIp: string;
   autoRestart: boolean;
+  // null leaves the port to the platform default. Set it only when the machine has arranged for
+  // something else - a capability that permits 80 on Linux, or another port because 8080 is taken.
+  proxyPort: number | null;
 };
 
 export class LocalgateMachineConfig
@@ -43,8 +46,18 @@ export class LocalgateMachineConfig
       label,
       baseDomain: LocalgateMachineConfig.requireString(parsed, "baseDomain", filePath),
       lanIp: LocalgateMachineConfig.requireString(parsed, "lanIp", filePath),
-      autoRestart: parsed.autoRestart === true
+      autoRestart: parsed.autoRestart === true,
+      proxyPort: LocalgateMachineConfig.optionalPort(parsed, "proxyPort", filePath)
     };
+  }
+
+  private static optionalPort(parsed: Record<string, unknown>, key: string, filePath: string): number | null
+  {
+    const value = parsed[key];
+    if (value === undefined || value === null) return null;
+    if (typeof value != "number" || !Number.isInteger(value) || value < 1 || value > 65_535)
+      throw new Error(`${filePath}: "${key}" must be a port number between 1 and 65535`);
+    return value;
   }
 
   static externalSuffix(settings: LocalgateMachineSettings): string

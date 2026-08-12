@@ -17,12 +17,12 @@ describe("LocalgateEnvRewrite", () =>
 
   it("changes nothing without an external suffix, which is mode local", () =>
   {
-    expect(LocalgateEnvRewrite.apply(pilotEnv(), null)).toEqual(pilotEnv());
+    expect(LocalgateEnvRewrite.apply(pilotEnv(), null, 80)).toEqual(pilotEnv());
   });
 
   it("rewrites only the variables a browser reads", () =>
   {
-    const result = LocalgateEnvRewrite.apply(pilotEnv(), suffix);
+    const result = LocalgateEnvRewrite.apply(pilotEnv(), suffix, 80);
 
     expect(result.NEXT_PUBLIC_APP_URL).toBe("http://myapp.dev.example.com");
     expect(result.AUTH_URL).toBe("http://myapp.dev.example.com");
@@ -32,7 +32,7 @@ describe("LocalgateEnvRewrite", () =>
 
   it("leaves server-only variables on .localhost", () =>
   {
-    const result = LocalgateEnvRewrite.apply(pilotEnv(), suffix);
+    const result = LocalgateEnvRewrite.apply(pilotEnv(), suffix, 80);
 
     expect(result.APP_BACKEND_WAGTAIL_API_URL).toBe("http://cms.localhost/api/v2");
     expect(result.APP_BACKEND_API_URL).toBe("http://api.localhost");
@@ -40,14 +40,35 @@ describe("LocalgateEnvRewrite", () =>
 
   it("does not add a trailing slash to a bare origin", () =>
   {
-    const result = LocalgateEnvRewrite.apply({ NEXT_PUBLIC_APP_URL: "http://web.localhost" }, suffix);
+    const result = LocalgateEnvRewrite.apply({ NEXT_PUBLIC_APP_URL: "http://web.localhost" }, suffix, 80);
     expect(result.NEXT_PUBLIC_APP_URL).toBe("http://web.dev.example.com");
   });
 
-  it("keeps an explicit port", () =>
+  // Behind a proxy that multiplexes by name there is exactly one port a browser-facing URL can mean, so
+  // a port written into the value by hand is replaced rather than carried through.
+  it("replaces a port already in the value with the one the proxy answers on", () =>
   {
-    const result = LocalgateEnvRewrite.apply({ NEXT_PUBLIC_APP_URL: "http://web.localhost:8080/x" }, suffix);
-    expect(result.NEXT_PUBLIC_APP_URL).toBe("http://web.dev.example.com:8080/x");
+    const result = LocalgateEnvRewrite.apply({ NEXT_PUBLIC_APP_URL: "http://web.localhost:3000/x" }, suffix, 80);
+    expect(result.NEXT_PUBLIC_APP_URL).toBe("http://web.dev.example.com/x");
+  });
+
+  // Mode local used to mean "rewrite nothing". Where the proxy cannot have 80 that leaves every
+  // browser-facing URL pointing at a port with nothing behind it.
+  it("adds the proxy port in mode local, where there is no suffix to swap", () =>
+  {
+    const result = LocalgateEnvRewrite.apply(pilotEnv(), null, 8_080);
+
+    expect(result.NEXT_PUBLIC_APP_URL).toBe("http://myapp.localhost:8080");
+    expect(result.NEXTAUTH_URL).toBe("http://myapp.localhost:8080/api/auth");
+    expect(result.APP_BACKEND_WAGTAIL_API_URL).toBe("http://cms.localhost/api/v2");
+  });
+
+  it("carries both the shared name and the port when neither is the default", () =>
+  {
+    const result = LocalgateEnvRewrite.apply(pilotEnv(), suffix, 8_080);
+
+    expect(result.NEXT_PUBLIC_APP_URL).toBe("http://myapp.dev.example.com:8080");
+    expect(result.AUTH_URL).toBe("http://myapp.dev.example.com:8080");
   });
 
   it("ignores a value that is not a URL and a host that is not .localhost", () =>
@@ -56,7 +77,7 @@ describe("LocalgateEnvRewrite", () =>
       AUTH_SECRET: "not-a-url",
       NEXT_PUBLIC_CDN_URL: "https://cdn.example.com/assets",
       NEXT_PUBLIC_PLAIN: "web.localhost"
-    }, suffix);
+    }, suffix, 80);
 
     expect(result.AUTH_SECRET).toBe("not-a-url");
     expect(result.NEXT_PUBLIC_CDN_URL).toBe("https://cdn.example.com/assets");
@@ -67,7 +88,8 @@ describe("LocalgateEnvRewrite", () =>
   {
     const result = LocalgateEnvRewrite.apply(
       { NEXT_PUBLIC_APP_URL: "http://web.localhost/redirect?to=http://web.localhost/next" },
-      suffix
+      suffix,
+      80
     );
 
     expect(result.NEXT_PUBLIC_APP_URL)
@@ -76,7 +98,7 @@ describe("LocalgateEnvRewrite", () =>
 
   it("leaves a bare .localhost host alone", () =>
   {
-    const result = LocalgateEnvRewrite.apply({ NEXT_PUBLIC_APP_URL: "http://localhost" }, suffix);
+    const result = LocalgateEnvRewrite.apply({ NEXT_PUBLIC_APP_URL: "http://localhost" }, suffix, 80);
     expect(result.NEXT_PUBLIC_APP_URL).toBe("http://localhost");
   });
 });

@@ -1,13 +1,13 @@
 {
   "name": "localgate",
-  "version": "0.2.0",
-  "description": "Stable names for local dev servers: one port 80 multiplexed by Host, plus an API that can restart a dev server owned by your editor. Windows only today.",
+  "version": "0.3.0",
+  "description": "Stable names for local dev servers: one port 80 multiplexed by Host, plus an API that can restart a dev server owned by your editor.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "ludekvodicka",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ludekvodicka/LocalGate.git"
+    "url": "git+https://github.com/ludekvodicka/LocalGate.git"
   },
   "homepage": "https://github.com/ludekvodicka/LocalGate#readme",
   "bugs": {
@@ -24,12 +24,9 @@
   "engines": {
     "node": ">=24"
   },
-  "os": [
-    "win32"
-  ],
   "packageManager": "pnpm@11.17.0",
   "bin": {
-    "localgate": "./bin/localgate.mjs"
+    "localgate": "bin/localgate.mjs"
   },
   "files": [
     "bin",

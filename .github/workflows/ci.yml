@@ -5,12 +5,16 @@ on:
     branches: [main]
   pull_request:
 
-# Windows is the current target platform: the process-tree kill behind `restart` is taskkill-based,
-# and the port-80 bind assumes Windows. A Linux/macOS job belongs here once those two are ported.
+# Both platforms, because the process kill, the port-holder lookup and the port the proxy binds all
+# differ between them. A green run on one says nothing about the other.
 jobs:
   verify:
     name: type-check + lint + tests
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v5

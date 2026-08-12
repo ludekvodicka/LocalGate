@@ -4,6 +4,7 @@ import { LocalgateCloudflareInfo } from "../cloudflare/localgateCloudflareInfo.t
 import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
 import { LocalgateProjectConfig } from "../config/localgateProjectConfig.ts";
 import { LocalgateProxyHost } from "../proxy/localgateProxyHost.ts";
+import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateRouteConflictError } from "../proxy/localgateRegistry.ts";
 import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
 import { LocalgateRunner } from "../run/localgateRunner.ts";
@@ -61,9 +62,10 @@ export class LocalgateCli
     }
 
     process.stdout.write("Active routes:\n\n");
+    const proxyPort = LocalgateProxyClient.proxyPort();
     for (const route of routes)
     {
-      process.stdout.write(`  ${route.names.map(name => `http://${name}`).join("\n  ")}\n`);
+      process.stdout.write(`  ${route.names.map(name => LocalgateUrl.forName(name, proxyPort)).join("\n  ")}\n`);
       process.stdout.write(`      -> 127.0.0.1:${route.port}  [${route.state}]  ${route.kind}`
         + `${route.debuggerAttached ? "  debugger" : ""}\n`);
       if (route.cwd) process.stdout.write(`      ${route.cwd}\n`);
@@ -93,7 +95,7 @@ export class LocalgateCli
     }
 
     process.stdout.write([
-      `${route.names.map(name => `http://${name}`).join("\n")}`,
+      `${route.names.map(name => LocalgateUrl.forName(name, LocalgateProxyClient.proxyPort())).join("\n")}`,
       `port        127.0.0.1:${route.port}`,
       `state       ${route.state}`,
       `mode        ${route.mode}`,
@@ -188,7 +190,7 @@ export class LocalgateCli
       return 1;
     }
 
-    process.stdout.write(LocalgateBanner.render(route));
+    process.stdout.write(LocalgateBanner.render(route, LocalgateProxyClient.proxyPort()));
     return 0;
   }
 
@@ -209,7 +211,8 @@ export class LocalgateCli
 
     process.stdout.write(LocalgateCloudflareInfo.render(
       `${project.name}${LocalgateMachineConfig.externalSuffix(machine)}`,
-      machine.lanIp
+      machine.lanIp,
+      LocalgateUrl.proxyPort(machine)
     ));
 
     return 0;
