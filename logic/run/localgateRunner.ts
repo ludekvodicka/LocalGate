@@ -4,9 +4,10 @@ import { readFileSync } from "node:fs";
 import { createServer as createSocketServer } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { LocalgateBanner } from "../cli/localgateBanner.ts";
 import { LocalgateProxyClient } from "../client/localgateProxyClient.ts";
 import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
-import { LocalgateProjectConfig, type LocalgateMode, type LocalgateProjectSettings } from "../config/localgateProjectConfig.ts";
+import { LocalgateProjectConfig, type LocalgateProjectSettings } from "../config/localgateProjectConfig.ts";
 import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
 import { LocalgateEnvRewrite } from "./localgateEnvRewrite.ts";
 import { LocalgateProcessTree } from "./localgateProcessTree.ts";
@@ -68,20 +69,6 @@ export class LocalgateRunner
     if (!body.includes("next")) return command;
 
     return [...command, "--", "-p", String(port)];
-  }
-
-  // The first thing a developer sees, and the place the two names have to explain themselves: the shared
-  // one is what you send to somebody else, the local one only ever resolves on this machine.
-  static banner(appName: string, mode: LocalgateMode, names: string[], port: number): string
-  {
-    const [local, shared] = names;
-    const lines = ["", `  localgate   ${appName}   ·   mode ${mode}`, ""];
-
-    if (shared) lines.push(`    shared     http://${shared}`);
-    lines.push(`    local      http://${local}`);
-    lines.push("", `    upstream   127.0.0.1:${port}`, "    restart    localgate restart", "");
-
-    return `${lines.join("\n")}\n`;
   }
 
   // Shown before the question, and instead of it when there is no terminal to ask in: whoever is about
@@ -149,7 +136,7 @@ export class LocalgateRunner
     const controlUrl = await this.startControlServer();
 
     await LocalgateProxyClient.ensureRunning();
-    this.route = await LocalgateProxyClient.register({
+    const route = await LocalgateProxyClient.register({
       names,
       port,
       kind: "app",
@@ -161,8 +148,9 @@ export class LocalgateRunner
       childPid: null,
       debuggerAttached: LocalgateRunner.debuggerAttached()
     });
+    this.route = route;
 
-    process.stdout.write(LocalgateRunner.banner(project.name, project.mode, names, port));
+    process.stdout.write(LocalgateBanner.render(route));
 
     this.installSignalHandlers();
     const heartbeat = this.startHeartbeat();

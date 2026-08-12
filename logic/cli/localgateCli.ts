@@ -1,4 +1,5 @@
 import { LocalgateProxyClient } from "../client/localgateProxyClient.ts";
+import { LocalgateBanner } from "./localgateBanner.ts";
 import { LocalgateCloudflareInfo } from "../cloudflare/localgateCloudflareInfo.ts";
 import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
 import { LocalgateProjectConfig } from "../config/localgateProjectConfig.ts";
@@ -187,7 +188,7 @@ export class LocalgateCli
       return 1;
     }
 
-    process.stdout.write(`localgate: ${route.names.map(entry => `http://${entry}`).join("  ")}  ->  127.0.0.1:${port}\n`);
+    process.stdout.write(LocalgateBanner.render(route));
     return 0;
   }
 

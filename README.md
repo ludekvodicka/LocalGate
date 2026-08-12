@@ -78,7 +78,13 @@ through a shared name, without an `allowedDevOrigins` entry in the project.
 
 ## Install
 
-Windows, Node 24+ and pnpm. Not on npm yet, so install it from the repository:
+Windows and Node 24+.
+
+```bash
+npm install -g localgate
+```
+
+Or from a clone, which is also how you develop on it:
 
 ```bash
 git clone https://github.com/ludekvodicka/LocalGate.git
@@ -272,7 +278,7 @@ build step.
 
 ## Status
 
-Early. Not published to npm yet, and Windows-only for now: the process-tree kill that makes `restart`
+Early, and Windows-only for now: the process-tree kill that makes `restart`
 reliable is implemented with `taskkill`, and the port-80 bind assumes Windows' lack of privileged-port
 restrictions. The rest is plain Node and portable.
 

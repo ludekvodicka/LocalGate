@@ -55,36 +55,6 @@ describe("LocalgateRunner", () =>
     });
   });
 
-  describe("banner", () =>
-  {
-    it("stacks the shared name above the local one and names the restart command", () =>
-    {
-      const text = LocalgateRunner.banner("myapp", "lan", [
-        "myapp.localhost",
-        "myapp.dev.example.com"
-      ], 54_624);
-
-      const lines = text.split("\n");
-      const shared = lines.findIndex(line => line.includes("shared"));
-      const local = lines.findIndex(line => line.includes("local "));
-
-      expect(shared).toBeGreaterThan(0);
-      expect(local).toBeGreaterThan(shared);
-      expect(text).toContain("http://myapp.dev.example.com");
-      expect(text).toContain("upstream   127.0.0.1:54624");
-      expect(text).toContain("localgate restart");
-      expect(text).toContain("mode lan");
-    });
-
-    it("shows one address in mode local, where no shared name exists", () =>
-    {
-      const text = LocalgateRunner.banner("tool", "local", ["tool.localhost"], 41_000);
-
-      expect(text).not.toContain("shared");
-      expect(text).toContain("http://tool.localhost");
-    });
-  });
-
   describe("parseOptions", () =>
   {
     it("takes a leading --force and leaves the command alone", () =>

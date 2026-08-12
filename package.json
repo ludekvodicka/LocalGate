@@ -1,7 +1,7 @@
 {
   "name": "localgate",
-  "version": "0.1.0",
-  "description": "Stable names for local dev servers: one port 80 multiplexed by Host, plus an API that can restart a dev server owned by your editor.",
+  "version": "0.2.0",
+  "description": "Stable names for local dev servers: one port 80 multiplexed by Host, plus an API that can restart a dev server owned by your editor. Windows only today.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "ludekvodicka",
@@ -24,13 +24,17 @@
   "engines": {
     "node": ">=24"
   },
+  "os": [
+    "win32"
+  ],
   "packageManager": "pnpm@11.17.0",
   "bin": {
     "localgate": "./bin/localgate.mjs"
   },
   "files": [
     "bin",
-    "logic"
+    "logic",
+    "!logic/**/*.test.ts"
   ],
   "scripts": {
     "test": "vitest run --passWithNoTests",
