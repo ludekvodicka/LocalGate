@@ -99,12 +99,18 @@ describe("LocalgateProxy", () =>
     return harness;
   };
 
+  // A real path for the platform the tests run on: `path` reads `C:\projects\web` on Linux as a single
+  // segment with backslashes in its name, so the nested lookup below would find a sibling, not a child.
+  const windows = process.platform == "win32";
+  const projectDir = (...parts: string[]) => [windows ? "C:\\projects" : "/projects", ...parts]
+    .join(windows ? "\\" : "/");
+
   const registration = (port: number, names: string[]): LocalgateRouteRegistration => ({
     names,
     port,
     kind: "app",
     mode: "lan",
-    cwd: "C:\\projects\\web",
+    cwd: projectDir("web"),
     command: "npm run dev",
     controlUrl: null,
     runnerPid: null,
@@ -272,7 +278,8 @@ describe("LocalgateProxy", () =>
     const listed = await call(harness.port, "/__localgate/routes", { host: "127.0.0.1" });
     expect((JSON.parse(listed.text) as { routes: unknown[] }).routes).toHaveLength(1);
 
-    const resolved = await call(harness.port, "/__localgate/resolve?cwd=C:\\projects\\web\\app", { host: "127.0.0.1" });
+    const nested = encodeURIComponent(projectDir("web", "app"));
+    const resolved = await call(harness.port, `/__localgate/resolve?cwd=${nested}`, { host: "127.0.0.1" });
     expect(resolved.status).toBe(200);
 
     const removed = await call(harness.port, `/__localgate/routes/${id}`, { host: "127.0.0.1", "x-method": "delete" });
