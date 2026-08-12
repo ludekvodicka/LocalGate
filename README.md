@@ -28,31 +28,25 @@ localgate status --json       # machine-readable state
 
 ## How it routes
 
-Every dev server binds an ephemeral loopback port and registers its name. Nothing else listens on 80.
+Every dev server binds an ephemeral loopback port and registers its name. The proxy routes by the
+`Host` header, so nothing else has to listen on 80.
 
 ```mermaid
 flowchart LR
-    subgraph reach["who is asking"]
-        direction TB
-        browser["browser on this PC<br/>myapp.localhost"]
-        lan["another PC on the LAN<br/>myapp.dev.example.com"]
-        net["someone outside the LAN<br/>myapp.dev.example.com"]
-    end
+    local["this PC"] -->|"local: myapp.localhost"| proxy
+    lan["the LAN"] -->|"lan: myapp.dev.example.com"| proxy
+    net["a tunnel"] -->|"internet: same name"| proxy
 
-    browser -->|mode local| proxy
-    lan -->|mode lan| proxy
-    net -->|mode internet| tunnel["Cloudflare tunnel<br/>ingress: this machine's LAN IP, port 80"] --> proxy
+    proxy["localgate :80"]
 
-    proxy["localgate proxy - port 80<br/>route table, by Host header"]
-
-    proxy --> app1["myapp<br/>127.0.0.1:41000"]
-    proxy --> app2["docs<br/>127.0.0.1:41001"]
-    proxy --> alias["alias: a docker service<br/>127.0.0.1:8001"]
+    proxy --> app1["myapp :41000"]
+    proxy --> app2["docs :41001"]
+    proxy --> alias["alias :8001"]
 ```
 
-The tunnel is not localgate's - it is whatever you already run. It keeps the `Host` header, so a
-request that arrives through it is routed exactly like a LAN request, and localgate needs to know
-nothing about it.
+The tunnel is not localgate's - it is whatever you already run, pointed at this machine's LAN address
+on port 80. It keeps the `Host` header, so a request arriving through it is routed exactly like a LAN
+request and localgate needs to know nothing about it.
 
 The table lives in the proxy's memory. There is no config file listing apps, no port assignment to keep
 in sync, and nothing to clean up after a crash.
@@ -62,19 +56,19 @@ in sync, and nothing to clean up after a crash.
 The runner sits in your editor's debug terminal and owns the dev server as its child. That is what lets
 a restart keep the terminal, the debugger and the route, and swap only the process underneath.
 
+With no argument, `localgate restart` asks the proxy which route owns the current directory, and posts
+to that runner's own control endpoint, which listens on loopback and nowhere else.
+
 ```mermaid
 sequenceDiagram
-    participant You as localgate restart
-    participant Proxy as proxy :80
-    participant Runner as localgate run (editor terminal)
+    participant Cli as localgate restart
+    participant Runner as localgate run
     participant Dev as npm run dev
 
-    You->>Proxy: which route owns this directory?
-    Proxy-->>You: myapp -> 127.0.0.1:41000, control on 127.0.0.1:52001
-    You->>Runner: POST /restart (loopback only)
-    Runner->>Dev: kill the process tree, wait for the port
-    Runner->>Dev: spawn again on the same port
-    Note over Proxy,Dev: the route never changed, so the browser keeps the same URL
+    Cli->>Runner: POST /restart
+    Runner->>Dev: kill the tree
+    Runner->>Dev: spawn on the same port
+    Note over Cli,Dev: same route, same port, the browser keeps its URL
 ```
 
 While the dev server is down the proxy answers with a readable page instead of a connection error.
