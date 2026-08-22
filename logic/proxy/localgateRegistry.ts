@@ -164,10 +164,22 @@ export class LocalgateRegistry
     return best;
   }
 
-  update(id: string, patch: Partial<Pick<LocalgateRoute, "state" | "lastResponseAt" | "childPid" | "debuggerAttached">>): LocalgateRoute
+  update(id: string, patch: Partial<Pick<LocalgateRoute,
+    "names" | "mode" | "state" | "lastResponseAt" | "childPid" | "debuggerAttached">>): LocalgateRoute
   {
     const route = this.routes.get(id);
     if (!route) throw new Error(`unknown route ${id}`);
+
+    if (patch.names)
+    {
+      if (patch.names.length == 0) throw new Error("a route needs at least one name");
+      for (const name of patch.names)
+      {
+        const existing = this.findByName(name);
+        if (existing && existing.id != id) throw new LocalgateRouteConflictError(existing);
+      }
+    }
+
     Object.assign(route, patch);
     return route;
   }

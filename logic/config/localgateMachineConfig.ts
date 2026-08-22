@@ -7,6 +7,7 @@ export type LocalgateMachineSettings =
   label: string;
   baseDomain: string;
   lanIp: string;
+  publicPrefix: string | null;
   autoRestart: boolean;
   // null leaves the port to the platform default. Set it only when the machine has arranged for
   // something else - a capability that permits 80 on Linux, or another port because 8080 is taken.
@@ -38,14 +39,13 @@ export class LocalgateMachineConfig
 
     const parsed = JSON.parse(raw) as Record<string, unknown>;
 
-    const label = LocalgateMachineConfig.requireString(parsed, "label", filePath);
-    if (!LocalgateMachineConfig.labelPatternConst.test(label))
-      throw new Error(`${filePath}: "label" must be a DNS label (lowercase letters, digits, hyphens), got "${label}"`);
+    const label = LocalgateMachineConfig.requireLabel(parsed, "label", filePath);
 
     return {
       label,
       baseDomain: LocalgateMachineConfig.requireString(parsed, "baseDomain", filePath),
       lanIp: LocalgateMachineConfig.requireString(parsed, "lanIp", filePath),
+      publicPrefix: LocalgateMachineConfig.optionalLabel(parsed, "publicPrefix", filePath),
       autoRestart: parsed.autoRestart === true,
       proxyPort: LocalgateMachineConfig.optionalPort(parsed, "proxyPort", filePath)
     };
@@ -63,6 +63,21 @@ export class LocalgateMachineConfig
   static externalSuffix(settings: LocalgateMachineSettings): string
   {
     return `.${settings.label}.${settings.baseDomain}`;
+  }
+
+  private static optionalLabel(parsed: Record<string, unknown>, key: string, filePath: string): string | null
+  {
+    const value = parsed[key];
+    if (value === undefined || value === null) return null;
+    return LocalgateMachineConfig.requireLabel(parsed, key, filePath);
+  }
+
+  private static requireLabel(parsed: Record<string, unknown>, key: string, filePath: string): string
+  {
+    const value = LocalgateMachineConfig.requireString(parsed, key, filePath);
+    if (!LocalgateMachineConfig.labelPatternConst.test(value))
+      throw new Error(`${filePath}: "${key}" must be a DNS label (lowercase letters, digits, hyphens), got "${value}"`);
+    return value;
   }
 
   private static requireString(parsed: Record<string, unknown>, key: string, filePath: string): string

@@ -130,6 +130,35 @@ describe("LocalgateRunner", () =>
     });
   });
 
+  describe("routeRegistrationMatches", () =>
+  {
+    const route: LocalgateRoute = {
+      id: "r1",
+      names: ["myapp.localhost"],
+      port: 41_000,
+      kind: "app",
+      mode: "local",
+      cwd: "C:\\projects\\myapp",
+      command: "npm run dev",
+      controlUrl: "http://127.0.0.1:51000",
+      runnerPid: 100,
+      childPid: 200,
+      debuggerAttached: false,
+      startedAt: "2026-08-21T15:00:00.000Z",
+      state: "healthy",
+      lastResponseAt: null
+    };
+
+    it("requires this runner's route, not merely a live proxy", () =>
+    {
+      expect(LocalgateRunner.routeRegistrationMatches(route, null, 100)).toBe(false);
+      expect(LocalgateRunner.routeRegistrationMatches(route, { ...route, runnerPid: 999 }, 100)).toBe(false);
+      expect(LocalgateRunner.routeRegistrationMatches(route, { ...route, controlUrl: "http://127.0.0.1:52000" }, 100))
+        .toBe(false);
+      expect(LocalgateRunner.routeRegistrationMatches(route, route, 100)).toBe(true);
+    });
+  });
+
   it("hands out a port that is actually free", async () =>
   {
     const port = await LocalgateRunner.freePort();

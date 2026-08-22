@@ -25,6 +25,7 @@ describe("LocalgateMachineConfig", () =>
       label: "dev",
       baseDomain: "example.com",
       lanIp: "192.0.2.10",
+      publicPrefix: null,
       autoRestart: false,
       proxyPort: null
     });
@@ -34,6 +35,25 @@ describe("LocalgateMachineConfig", () =>
   {
     const path = writeConfig({ label: "dev", baseDomain: "example.com", lanIp: "192.0.2.10", autoRestart: true });
     expect(LocalgateMachineConfig.load(path)?.autoRestart).toBe(true);
+  });
+
+  it("reads and validates the optional public prefix", () =>
+  {
+    const valid = writeConfig({
+      label: "dev",
+      baseDomain: "example.com",
+      lanIp: "192.0.2.10",
+      publicPrefix: "pub"
+    });
+    expect(LocalgateMachineConfig.load(valid)?.publicPrefix).toBe("pub");
+
+    const invalid = writeConfig({
+      label: "dev",
+      baseDomain: "example.com",
+      lanIp: "192.0.2.10",
+      publicPrefix: "Bad Prefix"
+    });
+    expect(() => LocalgateMachineConfig.load(invalid)).toThrow(/"publicPrefix" must be a DNS label/);
   });
 
   it("rejects a label that cannot be a DNS label", () =>
@@ -66,6 +86,7 @@ describe("LocalgateMachineConfig", () =>
       label: "dev",
       baseDomain: "example.com",
       lanIp: "192.0.2.10",
+      publicPrefix: null,
       autoRestart: false,
       proxyPort: null
     })).toBe(".dev.example.com");

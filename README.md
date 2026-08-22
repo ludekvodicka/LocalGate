@@ -6,8 +6,8 @@ Stable names for local dev servers.
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 One reverse proxy multiplexes every dev server on the machine by `Host` header, so each app gets a name
-instead of a port: `myapp.localhost` locally, and optionally `myapp.<label>.<your-domain>` so a
-colleague on the LAN can open it too.
+instead of a port: `myapp.localhost` locally, optionally `myapp.<label>.<your-domain>` on the LAN,
+and optionally `<public-prefix>-myapp.<your-domain>` through a tunnel.
 
 It also owns the dev process it starts, which is the part editors cannot give you: `localgate restart`
 restarts the server running inside your editor's debug terminal, without stealing the route or the
@@ -32,7 +32,8 @@ Every dev server binds an ephemeral loopback port and registers its name. The pr
 flowchart LR
     local["this PC"] -->|"local: myapp.localhost"| proxy
     lan["the LAN"] -->|"lan: myapp.dev.example.com"| proxy
-    net["a tunnel"] -->|"internet: same name"| proxy
+    net["the internet"] -->|"internet: pub-myapp.example.com"| tunnel["shared tunnel"]
+    tunnel --> proxy
 
     proxy["localgate proxy"]
 
@@ -41,9 +42,9 @@ flowchart LR
     proxy --> alias["alias :8001"]
 ```
 
-The tunnel is not localgate's - it is whatever you already run, pointed at this machine's LAN address
-on the proxy's port. It keeps the `Host` header, so a request arriving through it is routed exactly
-like a LAN request and localgate needs to know nothing about it.
+The tunnel is not localgate's. It is whatever you already run, pointed at this machine's LAN address
+on the proxy's port. It keeps the `Host` header, so a request arriving through it is routed like a LAN
+request. Localgate only needs the public prefix to register the exact public name.
 
 The table lives in the proxy's memory. There is no config file listing apps, no port assignment to keep
 in sync, and nothing to clean up after a crash.
@@ -51,7 +52,8 @@ in sync, and nothing to clean up after a crash.
 ## How restart works
 
 The runner sits in your editor's debug terminal and owns the dev server as its child. That is what lets
-a restart keep the terminal, the debugger and the route, and swap only the process underneath.
+a restart keep the terminal and debugger while swapping the process underneath. The restart also
+reloads `package.json` and the machine config, then updates the route names before the new child starts.
 
 With no argument, `localgate restart` asks the proxy which route owns the current directory, and posts
 to that runner's own control endpoint, which listens on loopback and nowhere else.
@@ -70,8 +72,9 @@ sequenceDiagram
 
 While the dev server is down the proxy answers with a readable page instead of a connection error.
 Websocket upgrades are proxied, and on Next.js dev endpoints (`/_next/*`, `/__nextjs*`) the `Origin`
-and `Referer` headers are mapped back to `.localhost` - which is what hot module reload needs to work
-through a shared name, without an `allowedDevOrigins` entry in the project.
+and `Referer` headers are mapped back to the route's `.localhost` name. The rewrite requires the header
+hostname to equal the incoming `Host`, so it works for LAN and public names without accepting a foreign
+origin or requiring an `allowedDevOrigins` entry in the project.
 
 ## Install
 
@@ -180,7 +183,7 @@ A project gets its name from `package.json`, and nothing else is needed to work 
 |---|---|---|
 | `local` (default) | `myapp.localhost` | this machine |
 | `lan` | + `myapp.<label>.<your-domain>` | any PC on the LAN that resolves your domain |
-| `internet` | the same shared name | wherever you point a tunnel at it |
+| `internet` | + `<public-prefix>-myapp.<your-domain>` | local machine, LAN and the configured tunnel |
 
 The name is the package name, with a scope dropped (`@org/web` becomes `web`), and it has to be a
 usable hostname label. When the package name is long or is not what you want to type, override it -
@@ -206,21 +209,24 @@ their own names without either name being in the repository:
   "label": "dev",              // your machine, as a DNS label
   "baseDomain": "example.com", // a domain whose wildcard resolves to this LAN
   "lanIp": "192.0.2.10",       // the address the proxy also listens on
+  "publicPrefix": "pub",        // prefix owned by this machine on the public domain
   "autoRestart": false         // see "When a dev server stops answering"
 }
 ```
 
-With that file present, `myapp` in mode `lan` also answers on `myapp.dev.example.com`. Browser-facing
+With that file present, `myapp` in mode `lan` also answers on `myapp.dev.example.com`, while mode
+`internet` additionally answers on `pub-myapp.example.com`. Browser-facing
 environment variables (`NEXT_PUBLIC_*`, `*_PUBLIC_URL`, `AUTH_URL`, `NEXTAUTH_URL`) are rewritten from
-`.localhost` to that name on the way into the dev server, in memory - a remote browser resolves
-`.localhost` to itself, so those URLs have to carry the shared name, while server-side variables stay
-on `.localhost` where they are faster and need no DNS.
+`.localhost` to the name selected by the current mode on the way into the dev server. Public URLs use
+HTTPS and never carry the proxy's internal LAN port. Server-side variables stay on `.localhost`.
 
-For reaching an app from outside the LAN, `localgate cloudflare-info` prints the DNS record and the
-tunnel ingress entry to paste. It prints them and stops: localgate holds no API token and sends nothing
-anywhere. Worth knowing before you paste them: a specific DNS record wins over the wildcard, so from
-then on the name goes out to Cloudflare and back for everyone, the LAN included, and anyone holding the
-URL reaches the dev server. That is why `internet` is a mode you switch back from.
+For reaching an app from outside the LAN, `localgate cloudflare-info` prints the exact prefixed DNS
+record and tunnel ingress entry. It prints them and stops: localgate holds no API token and sends
+nothing anywhere. In Atomix projects, use `axtoolsv2 expose <dir> off|network|internet`; AtomixToolsV2
+owns the API calls, project state, and Localgate reload. It retains an existing managed CNAME when
+leaving `internet` and removes only ingress, so the public hostname reaches the tunnel's 404 catch-all
+without DNS recreation delay. Anyone holding an enabled public URL reaches the dev server, which is why
+`internet` is a mode you switch back from.
 
 ## When a dev server stops answering
 
@@ -244,7 +250,7 @@ the names come back without touching a single dev server.
 
 ## Design rules
 
-- **Nothing machine-specific is committed.** The label, the domain and the LAN IP live in
+- **Nothing machine-specific is committed.** The label, public prefix, domain and LAN IP live in
   `~/.localgate/config.json`; a repository carries at most a `package.json` key holding a mode
   (`local` / `lan` / `internet`) and an optional name. Absent key means `local`, which is names on
   `.localhost` only.

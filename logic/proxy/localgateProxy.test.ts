@@ -57,8 +57,7 @@ describe("LocalgateProxy", () =>
     return { server, port: address.port };
   };
 
-  const startProxy = async (options: { externalSuffix?: string | null; gracePeriodMs?: number; upstreamPort?: number;
-    lanIp?: string } = {}): Promise<Harness> =>
+  const startProxy = async (options: { gracePeriodMs?: number; upstreamPort?: number; lanIp?: string } = {}): Promise<Harness> =>
   {
     const upstream = options.upstreamPort ? null : await startUpstream();
     const upstreamPort = options.upstreamPort ?? upstream!.port;
@@ -69,7 +68,6 @@ describe("LocalgateProxy", () =>
     const proxy = new LocalgateProxy(registry, health, new LocalgateControlApi(registry, () => proxy.checkIdle()), {
       port: 0,
       lanIp: options.lanIp ?? null,
-      externalSuffix: options.externalSuffix ?? null,
       gracePeriodMs: options.gracePeriodMs ?? 50,
       onIdle: () => { idleCount++; }
     });
@@ -192,8 +190,9 @@ describe("LocalgateProxy", () =>
 
   it("maps Origin back to .localhost for Next dev endpoints only", async () =>
   {
-    const harness = await startProxy({ externalSuffix: ".dev.example.com" });
-    harness.registry.register(registration(harness.upstreamPort, ["web.dev.example.com"]), new Date().toISOString());
+    const harness = await startProxy();
+    harness.registry.register(registration(harness.upstreamPort, ["web.localhost", "web.dev.example.com"]),
+      new Date().toISOString());
 
     const internal = await call(harness.port, "/_next/static/chunk.js", {
       host: "web.dev.example.com",
@@ -234,7 +233,7 @@ describe("LocalgateProxy", () =>
 
   it("refuses a .localhost name on the LAN listener and serves the shared one", async () =>
   {
-    const harness = await startProxy({ lanIp: "127.0.0.1", externalSuffix: ".dev.example.com" });
+    const harness = await startProxy({ lanIp: "127.0.0.1" });
     harness.registry.register(registration(harness.upstreamPort, ["web.localhost", "web.dev.example.com"]),
       new Date().toISOString());
 
@@ -302,8 +301,9 @@ describe("LocalgateProxy", () =>
 
   it("proxies a websocket upgrade, which is what makes HMR work", async () =>
   {
-    const harness = await startProxy({ externalSuffix: ".dev.example.com" });
-    harness.registry.register(registration(harness.upstreamPort, ["web.dev.example.com"]), new Date().toISOString());
+    const harness = await startProxy();
+    harness.registry.register(registration(harness.upstreamPort, ["web.localhost", "web.dev.example.com"]),
+      new Date().toISOString());
 
     const received = await upgrade(harness.port, "web.dev.example.com");
 

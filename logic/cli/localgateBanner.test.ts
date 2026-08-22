@@ -22,15 +22,15 @@ describe("LocalgateBanner", () =>
     ...patch
   });
 
-  it("stacks the shared name above the local one and closes with the command to type next", () =>
+  it("stacks the network name above the local one and closes with the command to type next", () =>
   {
     const text = LocalgateBanner.render(route({}), 80);
     const lines = text.split("\n");
-    const shared = lines.findIndex(line => line.includes("shared"));
+    const network = lines.findIndex(line => line.includes("network"));
     const local = lines.findIndex(line => line.includes("local "));
 
-    expect(shared).toBeGreaterThan(0);
-    expect(local).toBeGreaterThan(shared);
+    expect(network).toBeGreaterThan(0);
+    expect(local).toBeGreaterThan(network);
     expect(text).toContain("localgate   myapp   ·   mode lan");
     expect(text).toContain("http://myapp.dev.example.com");
     expect(text).toContain("upstream   127.0.0.1:54624");
@@ -54,6 +54,18 @@ describe("LocalgateBanner", () =>
     expect(text).not.toContain("shared");
     expect(text).toContain("http://tool.localhost");
     expect(text).toContain("mode local");
+  });
+
+  it("prints the public address without the proxy's internal LAN port", () =>
+  {
+    const text = LocalgateBanner.render(route({
+      names: ["myapp.localhost", "myapp.dev.example.com", "pub-myapp.example.com"],
+      mode: "internet"
+    }), 8_080);
+
+    expect(text).toContain("internet   https://pub-myapp.example.com");
+    expect(text).toContain("network    http://myapp.dev.example.com:8080");
+    expect(text).not.toContain("pub-myapp.example.com:8080");
   });
 
   // An alias used to announce itself in one line, which is why the scripts that register one printed their

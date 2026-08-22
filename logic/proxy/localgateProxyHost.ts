@@ -25,7 +25,6 @@ export class LocalgateProxyHost
       {
         port,
         lanIp: machine?.lanIp ?? null,
-        externalSuffix: machine ? LocalgateMachineConfig.externalSuffix(machine) : null,
         gracePeriodMs: LocalgateProxyHost.gracePeriodMsConst,
         onIdle: () =>
         {

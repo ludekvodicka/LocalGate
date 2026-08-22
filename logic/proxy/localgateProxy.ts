@@ -10,7 +10,6 @@ export type LocalgateProxyOptions =
   port: number;
   // null keeps the proxy on loopback only, which is what a machine with no localgate config gets.
   lanIp: string | null;
-  externalSuffix: string | null;
   gracePeriodMs: number;
   onIdle: () => void;
 };
@@ -129,7 +128,7 @@ export class LocalgateProxy
   private forward(route: LocalgateRoute, request: IncomingMessage, response: ServerResponse): void
   {
     const headers = { ...request.headers };
-    LocalgateHeaderRewrite.apply(request.url ?? "/", headers, this.options.externalSuffix);
+    LocalgateHeaderRewrite.apply(request.url ?? "/", headers, request.headers.host ?? "", route.names[0]!);
 
     const upstream = httpRequest({
       host: "127.0.0.1",
@@ -193,7 +192,7 @@ export class LocalgateProxy
     }
 
     const headers = { ...request.headers };
-    LocalgateHeaderRewrite.apply(request.url ?? "/", headers, this.options.externalSuffix);
+    LocalgateHeaderRewrite.apply(request.url ?? "/", headers, request.headers.host ?? "", route.names[0]!);
 
     const upstream = httpRequest({
       host: "127.0.0.1",

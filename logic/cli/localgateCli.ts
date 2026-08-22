@@ -2,6 +2,7 @@ import { LocalgateProxyClient } from "../client/localgateProxyClient.ts";
 import { LocalgateBanner } from "./localgateBanner.ts";
 import { LocalgateCloudflareInfo } from "../cloudflare/localgateCloudflareInfo.ts";
 import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
+import { LocalgateNames } from "../config/localgateNames.ts";
 import { LocalgateProjectConfig } from "../config/localgateProjectConfig.ts";
 import { LocalgateProxyHost } from "../proxy/localgateProxyHost.ts";
 import { LocalgateUrl } from "../proxy/localgateUrl.ts";
@@ -65,7 +66,7 @@ export class LocalgateCli
     const proxyPort = LocalgateProxyClient.proxyPort();
     for (const route of routes)
     {
-      process.stdout.write(`  ${route.names.map(name => LocalgateUrl.forName(name, proxyPort)).join("\n  ")}\n`);
+      process.stdout.write(`  ${LocalgateCli.routeUrls(route, proxyPort).join("\n  ")}\n`);
       process.stdout.write(`      -> 127.0.0.1:${route.port}  [${route.state}]  ${route.kind}`
         + `${route.debuggerAttached ? "  debugger" : ""}\n`);
       if (route.cwd) process.stdout.write(`      ${route.cwd}\n`);
@@ -95,7 +96,7 @@ export class LocalgateCli
     }
 
     process.stdout.write([
-      `${route.names.map(name => LocalgateUrl.forName(name, LocalgateProxyClient.proxyPort())).join("\n")}`,
+      LocalgateCli.routeUrls(route, LocalgateProxyClient.proxyPort()).join("\n"),
       `port        127.0.0.1:${route.port}`,
       `state       ${route.state}`,
       `mode        ${route.mode}`,
@@ -158,10 +159,7 @@ export class LocalgateCli
     }
 
     const machine = LocalgateMachineConfig.load();
-    const names = [`${name}.localhost`];
-    // An alias gets the shared name too when the machine has one: a browser on another PC loads media
-    // from these services by absolute URL, so they have to answer on the name that resolves there.
-    if (machine) names.push(`${name}${LocalgateMachineConfig.externalSuffix(machine)}`);
+    const names = LocalgateNames.routeNames(name, machine ? "lan" : "local", machine);
 
     await LocalgateProxyClient.ensureRunning();
 
@@ -205,12 +203,19 @@ export class LocalgateCli
     }
 
     const project = LocalgateProjectConfig.load(process.cwd());
+    const publicName = LocalgateNames.publicName(project.name, machine);
+    if (!publicName)
+    {
+      process.stderr.write(`localgate: ${LocalgateMachineConfig.filePath()} has no publicPrefix\n`);
+      return 1;
+    }
+
     if (project.mode != "internet")
       process.stdout.write(`Note: this project's mode is "${project.mode}". Set it to "internet" `
         + "in package.json when you actually want the entries below to be live.\n\n");
 
     process.stdout.write(LocalgateCloudflareInfo.render(
-      `${project.name}${LocalgateMachineConfig.externalSuffix(machine)}`,
+      publicName,
       machine.lanIp,
       LocalgateUrl.proxyPort(machine)
     ));
@@ -264,6 +269,13 @@ export class LocalgateCli
     process.stderr.write("localgate: no route for this directory or name. "
       + "Start the dev server from your editor, or pass the app name.\n");
     return 1;
+  }
+
+  private static routeUrls(route: LocalgateRoute, proxyPort: number): string[]
+  {
+    return route.names.map((name, index) => route.mode == "internet" && index == 2
+      ? `https://${name}`
+      : LocalgateUrl.forName(name, proxyPort));
   }
 
   private static printUsage(): void

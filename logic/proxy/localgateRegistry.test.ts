@@ -219,4 +219,25 @@ describe("LocalgateRegistry", () =>
     expect(registry.isEmpty()).toBe(true);
     expect(() => registry.update(route.id, { state: "dead" })).toThrow(/unknown route/);
   });
+
+  it("changes a running route's names and mode without letting it take another route's name", () =>
+  {
+    const registry = new LocalgateRegistry();
+    const web = registry.register(app(["web.localhost"], "C:\\projects\\web", 41_000), now);
+    registry.register(app(["api.localhost"], "C:\\projects\\api", 41_001), now);
+
+    registry.update(web.id, {
+      names: ["web.localhost", "web.dev.example.com", "pub-web.example.com"],
+      mode: "internet"
+    });
+    expect(registry.byId(web.id)?.names).toEqual([
+      "web.localhost",
+      "web.dev.example.com",
+      "pub-web.example.com"
+    ]);
+    expect(registry.byId(web.id)?.mode).toBe("internet");
+
+    expect(() => registry.update(web.id, { names: ["web.localhost", "api.localhost"] }))
+      .toThrow(LocalgateRouteConflictError);
+  });
 });

@@ -72,9 +72,10 @@ export class LocalgateProxyClient
     await LocalgateProxyClient.send("DELETE", `/routes/${id}`);
   }
 
-  static async patch(id: string, patch: Record<string, unknown>): Promise<void>
+  static async patch(id: string, patch: Record<string, unknown>): Promise<LocalgateRoute>
   {
-    await LocalgateProxyClient.send("PATCH", `/routes/${id}`, patch);
+    const payload = await LocalgateProxyClient.send("PATCH", `/routes/${id}`, patch) as { route: LocalgateRoute };
+    return payload.route;
   }
 
   static async list(): Promise<LocalgateRoute[]>

@@ -8,6 +8,7 @@ describe("LocalgateUrl", () =>
     label: "dev",
     baseDomain: "example.com",
     lanIp: "192.0.2.10",
+    publicPrefix: null,
     autoRestart: false,
     proxyPort
   });

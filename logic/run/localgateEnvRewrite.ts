@@ -1,3 +1,6 @@
+import type { LocalgateMachineSettings } from "../config/localgateMachineConfig.ts";
+import { LocalgateNames } from "../config/localgateNames.ts";
+import type { LocalgateMode } from "../config/localgateProjectConfig.ts";
 import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 
 // Keeps repositories machine-agnostic: a committed env file says `.localhost` everywhere, and what this
@@ -15,7 +18,8 @@ export class LocalgateEnvRewrite
   private static readonly localSuffixConst = ".localhost";
   private static readonly browserFacingNamesConst = ["AUTH_URL", "NEXTAUTH_URL"];
 
-  static apply(env: NodeJS.ProcessEnv, externalSuffix: string | null, proxyPort: number): NodeJS.ProcessEnv
+  static apply(env: NodeJS.ProcessEnv, mode: LocalgateMode, machine: LocalgateMachineSettings | null,
+    proxyPort: number): NodeJS.ProcessEnv
   {
     const result: NodeJS.ProcessEnv = { ...env };
 
@@ -23,7 +27,7 @@ export class LocalgateEnvRewrite
     {
       if (!value || !LocalgateEnvRewrite.isBrowserFacing(key)) continue;
 
-      const rewritten = LocalgateEnvRewrite.rewriteAuthority(value, externalSuffix, proxyPort);
+      const rewritten = LocalgateEnvRewrite.rewriteAuthority(value, mode, machine, proxyPort);
       if (rewritten) result[key] = rewritten;
     }
 
@@ -41,7 +45,8 @@ export class LocalgateEnvRewrite
   // keeps its exact original shape - notably no trailing slash appears on a bare origin, which app code
   // concatenates onto. A port already in the value is replaced rather than kept: behind a proxy that
   // multiplexes by name, a browser-facing URL has exactly one correct port.
-  private static rewriteAuthority(value: string, externalSuffix: string | null, proxyPort: number): string | null
+  private static rewriteAuthority(value: string, mode: LocalgateMode, machine: LocalgateMachineSettings | null,
+    proxyPort: number): string | null
   {
     let url: URL;
     try
@@ -58,9 +63,14 @@ export class LocalgateEnvRewrite
     const label = url.hostname.slice(0, -LocalgateEnvRewrite.localSuffixConst.length);
     if (label.length == 0) return null;
 
-    const name = `${label}${externalSuffix ?? LocalgateEnvRewrite.localSuffixConst}`;
-    const authority = LocalgateUrl.forName(name, proxyPort).replace("http://", "");
+    const name = LocalgateNames.browserName(label, mode, machine);
+    const publiclyExposed = mode == "internet" && machine?.publicPrefix;
+    const browserPort = publiclyExposed ? 80 : proxyPort;
+    const authority = LocalgateUrl.forName(name, browserPort).replace("http://", "");
+    const protocol = publiclyExposed && (url.protocol == "http:" || url.protocol == "https:") ? "https:" : url.protocol;
 
-    return url.host == authority ? null : value.replace(url.host, authority);
+    if (url.host == authority && url.protocol == protocol) return null;
+    const withAuthority = value.replace(url.host, authority);
+    return `${protocol}${withAuthority.slice(url.protocol.length)}`;
   }
 }

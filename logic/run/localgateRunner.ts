@@ -6,12 +6,20 @@ import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { LocalgateBanner } from "../cli/localgateBanner.ts";
 import { LocalgateProxyClient } from "../client/localgateProxyClient.ts";
-import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
+import { LocalgateMachineConfig, type LocalgateMachineSettings } from "../config/localgateMachineConfig.ts";
+import { LocalgateNames } from "../config/localgateNames.ts";
 import { LocalgateProjectConfig, type LocalgateProjectSettings } from "../config/localgateProjectConfig.ts";
 import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
 import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateEnvRewrite } from "./localgateEnvRewrite.ts";
 import { LocalgateProcessTree } from "./localgateProcessTree.ts";
+
+type LocalgateRunnerRuntime =
+{
+  project: LocalgateProjectSettings;
+  machine: LocalgateMachineSettings | null;
+  names: string[];
+};
 
 // Runs inside the editor's debug terminal and owns the dev process, which is the part an editor cannot
 // give away: the terminal keeps the debugger attached, while `localgate restart` swaps the child
@@ -25,6 +33,7 @@ export class LocalgateRunner
   private child: ChildProcess | null = null;
   private controlServer: Server | null = null;
   private route: LocalgateRoute | null = null;
+  private runtime: LocalgateRunnerRuntime | null = null;
   private readonly logs: string[] = [];
   private stopping = false;
   private restarting = false;
@@ -97,6 +106,11 @@ export class LocalgateRunner
     return command.map(part => /[\s"]/.test(part) ? `"${part.replace(/"/g, '\\"')}"` : part).join(" ");
   }
 
+  static routeRegistrationMatches(route: LocalgateRoute, registered: LocalgateRoute | null, runnerPid: number): boolean
+  {
+    return registered?.runnerPid == runnerPid && registered.controlUrl == route.controlUrl;
+  }
+
   static async freePort(): Promise<number>
   {
     return new Promise<number>((resolve, reject) =>
@@ -122,27 +136,21 @@ export class LocalgateRunner
   {
     if (this.command.length == 0) throw new Error("localgate run needs a command, for example: localgate run npm run dev");
 
-    const project = LocalgateProjectConfig.load(this.directory);
+    const runtime = this.loadRuntime();
 
-    const blocked = await this.clearPredecessor(project);
+    const blocked = await this.clearPredecessor(runtime.project);
     if (blocked != 0) return blocked;
-
-    const machine = LocalgateMachineConfig.load();
-    const external = machine && project.mode != "local" ? LocalgateMachineConfig.externalSuffix(machine) : null;
-
-    const names = [`${project.name}.localhost`];
-    if (external) names.push(`${project.name}${external}`);
 
     const port = await LocalgateRunner.freePort();
     const controlUrl = await this.startControlServer();
 
     await LocalgateProxyClient.ensureRunning();
     const route = await LocalgateProxyClient.register({
-      names,
+      names: runtime.names,
       port,
       kind: "app",
-      mode: project.mode,
-      cwd: project.packageDirectory,
+      mode: runtime.project.mode,
+      cwd: runtime.project.packageDirectory,
       command: this.command.join(" "),
       controlUrl,
       runnerPid: process.pid,
@@ -150,13 +158,14 @@ export class LocalgateRunner
       debuggerAttached: LocalgateRunner.debuggerAttached()
     });
     this.route = route;
+    this.runtime = runtime;
 
     process.stdout.write(LocalgateBanner.render(route, LocalgateProxyClient.proxyPort()));
 
     this.installSignalHandlers();
     const heartbeat = this.startHeartbeat();
 
-    const finished = this.spawnChild(port, project.packageDirectory, external);
+    const finished = this.spawnChild(port);
     await finished;
 
     clearInterval(heartbeat);
@@ -295,12 +304,16 @@ export class LocalgateRunner
       throw new Error(`${route.names[0]} still holds 127.0.0.1:${route.port} - stop it by hand`);
   }
 
-  private spawnChild(port: number, packageDirectory: string, external: string | null): Promise<void>
+  private spawnChild(port: number): Promise<void>
   {
-    const scripts = LocalgateRunner.readScripts(packageDirectory);
+    const runtime = this.runtime;
+    if (!runtime) throw new Error("localgate runtime is not configured");
+
+    const scripts = LocalgateRunner.readScripts(runtime.project.packageDirectory);
     const command = LocalgateRunner.withPortFlag(this.command, scripts, port);
 
-    const env = LocalgateEnvRewrite.apply(process.env, external, LocalgateProxyClient.proxyPort());
+    const env = LocalgateEnvRewrite.apply(process.env, runtime.project.mode, runtime.machine,
+      LocalgateProxyClient.proxyPort());
     env.PORT = String(port);
 
     // One command string rather than a command plus an args array: `npm run dev` on Windows is a .cmd,
@@ -320,7 +333,10 @@ export class LocalgateRunner
     });
 
     this.child = child;
-    if (this.route) void LocalgateProxyClient.patch(this.route.id, { childPid: child.pid ?? null }).catch(() => {});
+    if (this.route)
+      void LocalgateProxyClient.patch(this.route.id, { childPid: child.pid ?? null })
+        .then(route => { this.route = route; })
+        .catch(() => {});
 
     child.stdout?.on("data", chunk => this.absorb(chunk as Buffer, process.stdout));
     child.stderr?.on("data", chunk => this.absorb(chunk as Buffer, process.stderr));
@@ -334,7 +350,7 @@ export class LocalgateRunner
         if (this.restarting)
         {
           this.restarting = false;
-          resolve(this.spawnChild(port, packageDirectory, external));
+          resolve(this.spawnChild(port));
           return;
         }
 
@@ -349,6 +365,12 @@ export class LocalgateRunner
     const child = this.child;
     if (!child?.pid || !this.route) throw new Error("nothing to restart");
 
+    const runtime = this.loadRuntime();
+    this.route = await LocalgateProxyClient.patch(this.route.id, {
+      names: runtime.names,
+      mode: runtime.project.mode
+    });
+    this.runtime = runtime;
     this.restarting = true;
     await LocalgateProcessTree.killTree(child.pid, this.route.port);
   }
@@ -422,8 +444,9 @@ export class LocalgateRunner
     });
   }
 
-  // The proxy holds the route table in memory, so if it dies the route dies with it. Re-registering on a
-  // failed ping keeps a running dev server reachable without the developer noticing anything happened.
+  // The proxy holds the route table in memory, so if it dies the route dies with it. Another runner may
+  // start the proxy before this heartbeat, so a successful ping is not enough: this runner verifies that
+  // its own route is present and re-registers when it is missing.
   private startHeartbeat(): NodeJS.Timeout
   {
     const timer = setInterval(() =>
@@ -431,7 +454,13 @@ export class LocalgateRunner
       void (async () =>
       {
         if (this.stopping || !this.route) return;
-        if (await LocalgateProxyClient.ping()) return;
+
+        const registered = await LocalgateProxyClient.resolve({ name: this.route.names[0] }).catch(() => null);
+        if (LocalgateRunner.routeRegistrationMatches(this.route, registered, process.pid))
+        {
+          this.route = registered;
+          return;
+        }
 
         try
         {
@@ -486,6 +515,7 @@ export class LocalgateRunner
     {
       await LocalgateProxyClient.deregister(this.route.id).catch(() => {});
       this.route = null;
+      this.runtime = null;
     }
 
     if (this.controlServer)
@@ -507,5 +537,12 @@ export class LocalgateRunner
     {
       return {};
     }
+  }
+
+  private loadRuntime(): LocalgateRunnerRuntime
+  {
+    const project = LocalgateProjectConfig.load(this.directory);
+    const machine = LocalgateMachineConfig.load();
+    return { project, machine, names: LocalgateNames.routeNames(project.name, project.mode, machine) };
   }
 }
