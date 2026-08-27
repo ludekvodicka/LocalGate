@@ -1,3 +1,4 @@
+import { LocalgateNames } from "../config/localgateNames.ts";
 import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
 import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 
@@ -30,7 +31,7 @@ export class LocalgateBanner
   // The short name a person types, which is the first label of the local name.
   static appName(route: LocalgateRoute): string
   {
-    return route.names[0].split(".")[0];
+    return LocalgateNames.shortName(route.names[0]);
   }
 
   private static subtitle(route: LocalgateRoute): string
@@ -41,12 +42,12 @@ export class LocalgateBanner
       throw new Error(`Unknown route kind: ${JSON.stringify(route.kind)}`);
   }
 
-  // An alias has no process, so there is nothing to restart - what it needs instead is the line that puts
-  // it back, because the route table is in memory and a proxy restart drops it.
+  // An alias has no process, so there is nothing to restart. It used to need the line that put it back
+  // after a proxy restart; now that its intent is remembered, the line it needs is the way out.
   private static next(route: LocalgateRoute): [string, string]
   {
     if (route.kind == "app") return ["restart", "localgate restart"];
-    else if (route.kind == "alias") return ["re-add", `localgate alias ${LocalgateBanner.appName(route)} ${route.port}`];
+    else if (route.kind == "alias") return ["remove", `localgate alias --remove ${LocalgateBanner.appName(route)}`];
     else
       throw new Error(`Unknown route kind: ${JSON.stringify(route.kind)}`);
   }

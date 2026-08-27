@@ -24,7 +24,8 @@ replacing the runner or its editor terminal.
 
 Each runner heartbeat also verifies that the proxy still contains that runner's own route. If another
 runner recreates a stopped proxy first, every remaining runner registers itself again without restarting
-its child process. Static alias routes have no runner and must be added again after a proxy replacement.
+its child process. Static alias routes have no runner to do that, so the starting proxy replays them
+from `~/.localgate/aliases.json` instead (see `alias-persistence.md`).
 
 For Next.js internal requests, the proxy rewrites `Origin` and `Referer` to the route's first name,
 which is always the canonical `.localhost` name. It only rewrites a header whose hostname exactly

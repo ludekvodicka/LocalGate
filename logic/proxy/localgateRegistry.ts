@@ -55,7 +55,9 @@ export class LocalgateRouteConflictError extends Error
 
 // The table lives in the proxy process and nowhere else: no state file, so there is no lock to take
 // and no stale row to prune after a crash. Runners and the CLI reach it over the proxy's loopback
-// control API, and a route disappears when its owner stops answering.
+// control API, and a route disappears when its owner stops answering. Aliases are the one exception,
+// and only outside this class: they have no owner to re-register them, so their INTENT is kept in
+// ~/.localgate/aliases.json and replayed by the proxy host at boot. The table itself still has no file.
 export class LocalgateRegistry
 {
   private static readonly localSuffixConst = ".localhost";

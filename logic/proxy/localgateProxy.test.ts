@@ -299,6 +299,37 @@ describe("LocalgateProxy", () =>
     expect(harness.registry.isEmpty()).toBe(true);
   });
 
+  // A route aimed at the proxy's own port would come back in as loopback, which is how a LAN caller
+  // reaches the loopback-only control API, and how any other path loops until the sockets run out.
+  it("refuses to forward a route that points at its own port", async () =>
+  {
+    const harness = await startProxy({ lanIp: "127.0.0.1" });
+    harness.registry.register(
+      registration(harness.port, ["loop.localhost", "loop.dev.example.com"]),
+      new Date().toISOString()
+    );
+
+    // From the LAN listener the control path is just a path. Forwarding it to the proxy's own port is
+    // what used to re-enter as loopback and answer with the whole route table.
+    const answer = await call(harness.lanPort!, "/__localgate/routes", { host: "loop.dev.example.com" });
+
+    expect(answer.status).toBe(502);
+    expect(answer.text).toContain("localgate's own port");
+    expect(answer.text).not.toContain("\"routes\"");
+  });
+
+  it("refuses a registration whose port or kind the rest of the proxy cannot use", async () =>
+  {
+    const harness = await startProxy();
+    const post = (body: unknown) => call(harness.port, "/__localgate/routes",
+      { host: "127.0.0.1", "content-type": "application/json" }, JSON.stringify(body));
+
+    expect((await post({ ...registration(70_000, ["web.localhost"]) })).status).toBe(400);
+    expect((await post({ ...registration(harness.upstreamPort, ["web.localhost"]), kind: "gadget" })).status).toBe(400);
+    expect((await post({ ...registration(harness.upstreamPort, []) })).status).toBe(400);
+    expect(harness.registry.isEmpty()).toBe(true);
+  });
+
   it("proxies a websocket upgrade, which is what makes HMR work", async () =>
   {
     const harness = await startProxy();

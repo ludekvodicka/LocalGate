@@ -1,4 +1,6 @@
-import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
+import { LocalgateAliasStore } from "../config/localgateAliasStore.ts";
+import { LocalgateMachineConfig, type LocalgateMachineSettings } from "../config/localgateMachineConfig.ts";
+import { LocalgateAliasRoute } from "./localgateAliasRoute.ts";
 import { LocalgateUrl } from "./localgateUrl.ts";
 import { LocalgateControlApi } from "./localgateControlApi.ts";
 import { LocalgateHealth } from "./localgateHealth.ts";
@@ -34,12 +36,22 @@ export class LocalgateProxyHost
       }
     );
 
+    LocalgateProxyHost.restoreAliases(registry, machine);
+
     await proxy.start();
     process.stdout.write(`localgate proxy listening on 127.0.0.1:${port}`
       + `${machine?.lanIp ? ` and ${machine.lanIp}:${port}` : ""}\n`);
 
     for (const signal of ["SIGINT", "SIGTERM"] as const)
       process.on(signal, () => void proxy.stop().then(() => process.exit(0)));
+  }
+
+  // Runs before `start()`, whose last step is the idle check: routes registered by then keep the fresh
+  // proxy from scheduling its own exit, exactly as a live alias does.
+  private static restoreAliases(registry: LocalgateRegistry, machine: LocalgateMachineSettings | null): void
+  {
+    const restored = LocalgateAliasRoute.restore(registry, LocalgateAliasStore.load(), machine, new Date().toISOString());
+    for (const line of restored) process.stdout.write(`${line}\n`);
   }
 
   private static async requestRestart(route: LocalgateRoute): Promise<void>

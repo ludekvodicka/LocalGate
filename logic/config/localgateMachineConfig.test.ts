@@ -80,6 +80,12 @@ describe("LocalgateMachineConfig", () =>
     expect(() => LocalgateMachineConfig.load(path)).toThrow(/"baseDomain" must be a non-empty string/);
   });
 
+  it("shares its DNS-label rule with the alias store", () =>
+  {
+    expect(LocalgateMachineConfig.isLabel("myapp")).toBe(true);
+    expect(LocalgateMachineConfig.isLabel("Bad Name")).toBe(false);
+  });
+
   it("builds the external suffix", () =>
   {
     expect(LocalgateMachineConfig.externalSuffix({

@@ -1,9 +1,12 @@
 import { LocalgateProxyClient } from "../client/localgateProxyClient.ts";
 import { LocalgateBanner } from "./localgateBanner.ts";
 import { LocalgateCloudflareInfo } from "../cloudflare/localgateCloudflareInfo.ts";
+import { LocalgateAliasStore } from "../config/localgateAliasStore.ts";
 import { LocalgateMachineConfig } from "../config/localgateMachineConfig.ts";
 import { LocalgateNames } from "../config/localgateNames.ts";
 import { LocalgateProjectConfig } from "../config/localgateProjectConfig.ts";
+import { LocalgateConfigReporter } from "../config/localgateConfigReport.ts";
+import { LocalgateAliasRoute } from "../proxy/localgateAliasRoute.ts";
 import { LocalgateProxyHost } from "../proxy/localgateProxyHost.ts";
 import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateRouteConflictError } from "../proxy/localgateRegistry.ts";
@@ -36,6 +39,7 @@ export class LocalgateCli
     else if (command == "stop") return LocalgateCli.control(rest, "stop");
     else if (command == "logs") return LocalgateCli.logs(rest);
     else if (command == "alias") return LocalgateCli.alias(rest);
+    else if (command == "config") return LocalgateCli.config(rest);
     else if (command == "cloudflare-info") return LocalgateCli.cloudflareInfo();
     else if (command == "prune") return LocalgateCli.prune();
     else
@@ -59,6 +63,11 @@ export class LocalgateCli
     if (routes.length == 0)
     {
       process.stdout.write("No routes. Nothing is running, and the proxy is not needed until something is.\n");
+
+      const dormant = LocalgateAliasStore.load().length;
+      if (dormant > 0)
+        process.stdout.write(`${dormant} alias(es) will answer again when the proxy next starts.\n`);
+
       return 0;
     }
 
@@ -73,6 +82,38 @@ export class LocalgateCli
       process.stdout.write("\n");
     }
 
+    return 0;
+  }
+
+  // Read-only: what this machine and this project are configured as, and the names that follow from it.
+  // Other tools ask for this instead of parsing ~/.localgate/config.json and re-deriving the names, which
+  // is how two copies of the same rules start to drift.
+  private static config(args: string[]): number
+  {
+    const asJson = args.includes("--json");
+    const directory = args.find(argument => !argument.startsWith("--")) ?? process.cwd();
+    const report = LocalgateConfigReporter.build(directory);
+
+    if (asJson)
+    {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      return 0;
+    }
+
+    process.stdout.write([
+      `machine config  ${report.machineFilePath}${report.machine ? "" : " (missing - this machine serves .localhost only)"}`,
+      `label           ${report.machine?.label ?? "-"}`,
+      `base domain     ${report.machine?.baseDomain ?? "-"}`,
+      `lan ip          ${report.machine?.lanIp ?? "-"}`,
+      `public prefix   ${report.machine?.publicPrefix ?? "-"}`,
+      `proxy port      ${report.proxyPort}`,
+      `project         ${report.project ? `${report.project.name} (${report.project.mode})` : "-"}`,
+      `local name      ${report.names?.local ?? "-"}`,
+      `lan name        ${report.names?.lan ?? "-"}`,
+      `public name     ${report.names?.public ?? "-"}`,
+      `aliases         ${report.aliases.filePath} (${report.aliases.count})`,
+      ""
+    ].join("\n"));
     return 0;
   }
 
@@ -149,6 +190,8 @@ export class LocalgateCli
 
   private static async alias(args: string[]): Promise<number>
   {
+    if (args[0] == "--remove") return LocalgateCli.aliasRemove(args[1]);
+
     const [name, portText] = args;
     const port = Number.parseInt(portText ?? "", 10);
 
@@ -158,26 +201,30 @@ export class LocalgateCli
       return 1;
     }
 
+    // The store applies exactly these two rules when it reads the file back, so anything refused here
+    // would otherwise register, print a banner, and be dropped without a word at the next proxy boot.
+    if (!LocalgateMachineConfig.isLabel(name) || !LocalgateAliasStore.isPort(port))
+    {
+      process.stderr.write(`localgate: ${name} ${portText} cannot be an alias. The name must be a DNS `
+        + "label (lowercase letters, digits, hyphens) and the port a number from 1 to 65535.\n");
+      return 1;
+    }
+
     const machine = LocalgateMachineConfig.load();
-    const names = LocalgateNames.routeNames(name, machine ? "lan" : "local", machine);
+
+    if (port == LocalgateUrl.proxyPort(machine))
+    {
+      process.stderr.write(`localgate: port ${port} is localgate's own port, so the alias would only `
+        + "send requests back to the proxy. Point it at the port the service listens on.\n");
+      return 1;
+    }
 
     await LocalgateProxyClient.ensureRunning();
 
     let route: LocalgateRoute;
     try
     {
-      route = await LocalgateProxyClient.register({
-        names,
-        port,
-        kind: "alias",
-        mode: machine ? "lan" : "local",
-        cwd: null,
-        command: null,
-        controlUrl: null,
-        runnerPid: null,
-        childPid: null,
-        debuggerAttached: false
-      });
+      route = await LocalgateProxyClient.register(LocalgateAliasRoute.registration(name, port, machine));
     }
     catch (error)
     {
@@ -188,7 +235,66 @@ export class LocalgateCli
       return 1;
     }
 
+    // Only once the proxy took the name: a refused registration must not leave an entry that the next
+    // proxy boot would restore. A disk failure here is worth saying out loud rather than throwing over
+    // the banner, because the alias is already live and useful - it just will not come back.
+    try
+    {
+      LocalgateAliasStore.add({ name, port });
+    }
+    catch (error)
+    {
+      process.stderr.write(`localgate: ${name} is live, but ${LocalgateAliasStore.filePath()} could not `
+        + `be written, so it will not survive a proxy restart: ${String(error)}\n`);
+    }
+
     process.stdout.write(LocalgateBanner.render(route, LocalgateProxyClient.proxyPort()));
+    return 0;
+  }
+
+  // Removal has to work with the proxy down, because an alias outliving the proxy is the whole point of
+  // persisting it. With nothing listening, dropping the file entry IS the removal: the only other reader
+  // of the file is the next proxy boot.
+  private static async aliasRemove(argument: string | undefined): Promise<number>
+  {
+    if (!argument)
+    {
+      process.stderr.write("localgate: usage is localgate alias --remove <name>\n");
+      return 1;
+    }
+
+    // The store knows an alias by the short name it was registered under, while a route answers to its
+    // full hostnames too - and those are the names a person reads in `localgate list`. Reduce once, so
+    // the route and the file cannot end up disagreeing about what was removed.
+    const name = LocalgateNames.shortName(argument);
+    const route = await LocalgateProxyClient.resolve({ name });
+
+    // An app that took an alias's name evicts the route but not the intent, so the entry has to go even
+    // here - otherwise the alias comes back at the next proxy boot and nothing can stop it.
+    if (route && route.kind != "alias")
+    {
+      const forgotten = LocalgateAliasStore.remove(name);
+      if (forgotten)
+      {
+        process.stdout.write(`localgate: ${name} is a running dev server, so its route stays. `
+          + "The persisted alias of that name was removed.\n");
+        return 0;
+      }
+
+      process.stderr.write(`localgate: ${name} is a running dev server, not an alias\n`);
+      return 1;
+    }
+
+    if (route) await LocalgateProxyClient.deregister(route.id);
+    const dropped = LocalgateAliasStore.remove(name);
+
+    if (!route && !dropped)
+    {
+      process.stderr.write(`localgate: no alias named ${name}\n`);
+      return 1;
+    }
+
+    process.stdout.write(`localgate: alias ${name} removed\n`);
     return 0;
   }
 
@@ -289,7 +395,10 @@ export class LocalgateCli
       "  localgate restart [app]         restart a route's dev server\n" +
       "  localgate stop [app]            stop a route's dev server\n" +
       "  localgate logs [app] [--lines N]  tail a route's captured output\n" +
-      "  localgate alias <name> <port>   register a static route (e.g. a docker service)\n" +
+      "  localgate alias <name> <port>   register a static route (e.g. a docker service); it is\n" +
+      "                                  remembered and comes back when the proxy restarts\n" +
+      "  localgate alias --remove <name> drop a static route and forget it\n" +
+      "  localgate config [dir] [--json] machine + project config and the names it implies\n" +
       "  localgate cloudflare-info       print the DNS and ingress entries to paste\n" +
       "  localgate prune                 drop routes whose runner is gone\n\n" +
       "[app] is optional: with no argument a command acts on the route owning the current directory.\n"

@@ -8,6 +8,8 @@ import type { LocalgateRoute, LocalgateRouteRegistration } from "../proxy/localg
 
 // Every process other than the proxy reaches the route table through here. The table has no file, so
 // this client is the only way in - and it is loopback-only, which is what keeps the LAN out of it.
+// Alias intent is the one exception: `localgate alias --remove` edits ~/.localgate/aliases.json itself
+// when the proxy is down, because there is nothing to ask.
 export class LocalgateProxyClient
 {
   private static readonly startTimeoutMsConst = 15_000;

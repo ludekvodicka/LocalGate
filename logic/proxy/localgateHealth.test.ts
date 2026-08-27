@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { LocalgateAliasRoute } from "./localgateAliasRoute.ts";
 import { LocalgateHealth } from "./localgateHealth.ts";
 import { LocalgateRegistry, type LocalgateRoute } from "./localgateRegistry.ts";
 
@@ -29,7 +30,16 @@ describe("LocalgateHealth", () =>
       () => clock
     );
 
-    return { registry, route, health, restarted, advance: (ms: number) => { clock += ms; }, state: () => registry.byId(route.id)!.state };
+    const alias = registry.register(LocalgateAliasRoute.registration("cms", 8_002, {
+      label: "dev",
+      baseDomain: "example.com",
+      lanIp: "192.0.2.10",
+      publicPrefix: null,
+      autoRestart: false,
+      proxyPort: null
+    }), new Date(0).toISOString());
+
+    return { registry, route, alias, health, restarted, advance: (ms: number) => { clock += ms; }, state: () => registry.byId(route.id)!.state };
   };
 
   it("marks a route healthy on a response and records when", () =>
@@ -129,6 +139,31 @@ describe("LocalgateHealth", () =>
     expect(health.unresponsiveMessage(route)).toContain("localgate restart web");
     expect(health.unresponsiveMessage(route)).toContain("C:\\projects\\web");
     expect(health.deadMessage(route)).toContain("nothing is listening");
+    expect(health.deadMessage(route)).toContain("localgate prune");
     expect(health.startingMessage(route)).toContain("still starting");
+  });
+
+  it("sends a dead alias to the port it points at, not to an editor or prune", () =>
+  {
+    const { health, alias } = setup();
+
+    const message = health.deadMessage(alias);
+
+    expect(message).toContain("127.0.0.1:8002");
+    expect(message).toContain("localgate alias --remove cms");
+    expect(message).not.toContain("prune");
+    expect(message).not.toContain("from your editor");
+  });
+
+  // `localgate restart` refuses an alias outright, so the wedged page must not send anyone there.
+  it("does not offer a restart for a wedged alias", () =>
+  {
+    const { health, alias } = setup();
+
+    const message = health.unresponsiveMessage(alias);
+
+    expect(message).toContain("127.0.0.1:8002");
+    expect(message).toContain("localgate alias --remove cms");
+    expect(message).not.toContain("localgate restart");
   });
 });

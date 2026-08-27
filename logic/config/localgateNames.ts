@@ -25,6 +25,13 @@ export class LocalgateNames
     return `${label}.${machine.baseDomain}`;
   }
 
+  // The short name a person types, from any of the names a route answers to. Every layer needs it - the
+  // banner, the proxy's error pages, the CLI - and each one deriving it again is how they drift apart.
+  static shortName(hostname: string): string
+  {
+    return hostname.split(".")[0];
+  }
+
   static routeNames(projectName: string, mode: LocalgateMode, machine: LocalgateMachineSettings | null): string[]
   {
     const local = LocalgateNames.local(projectName);

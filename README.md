@@ -151,7 +151,9 @@ without asking.
 | `localgate restart [app]` | Restart a route's dev server. |
 | `localgate stop [app]` | Stop a route's dev server. |
 | `localgate logs [app] [--lines N]` | Tail a route's captured output. |
-| `localgate alias <name> <port>` | Register a static route, e.g. a docker service. |
+| `localgate alias <name> <port>` | Register a static route, e.g. a docker service. Remembered across proxy restarts. |
+| `localgate alias --remove <name>` | Drop a static route and forget it. |
+| `localgate config [dir] [--json]` | Machine and project config, the names it implies, and the alias file. |
 | `localgate cloudflare-info` | Print the DNS and ingress entries to paste. |
 | `localgate prune` | Drop routes whose runner is gone. |
 
@@ -246,7 +248,8 @@ externally indistinguishable from a wedged one, and killing it would destroy the
 standing in. Reporting always happens; only the restart is behind the switch.
 
 If the proxy itself dies, every running app notices within ten seconds and re-registers its route, so
-the names come back without touching a single dev server.
+the names come back without touching a single dev server. An alias has no process to notice, so the
+starting proxy replays the aliases from `~/.localgate/aliases.json` instead.
 
 ## Design rules
 
@@ -254,8 +257,11 @@ the names come back without touching a single dev server.
   `~/.localgate/config.json`; a repository carries at most a `package.json` key holding a mode
   (`local` / `lan` / `internet`) and an optional name. Absent key means `local`, which is names on
   `.localhost` only.
-- **Nothing is persisted.** The route table is live state; after a reboot nothing runs until the first
-  command. Aliases are part of that: `localgate alias` has to be re-run after the proxy exits.
+- **Nothing is persisted except alias intent.** The route table is live state; after a reboot nothing
+  runs until the first command. The one exception is `localgate alias`: it records the name and the port
+  in `~/.localgate/aliases.json`, and a starting proxy serves those names again. An alias has no process
+  of its own, so a file is the only thing that can bring it back. Drop it with
+  `localgate alias --remove <name>`.
 - **The proxy is not a service.** The first `run` or `alias` starts it, and it exits once the last route
   disappears.
 - **No TLS, no tunnels of its own.** Plain http; put Cloudflare in front when something must be reachable

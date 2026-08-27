@@ -65,6 +65,13 @@ export class LocalgateMachineConfig
     return `.${settings.label}.${settings.baseDomain}`;
   }
 
+  // The alias store validates names against the same rule, and two copies of a DNS-label regex is how
+  // one of them ends up accepting a name the proxy will never serve.
+  static isLabel(value: string): boolean
+  {
+    return LocalgateMachineConfig.labelPatternConst.test(value);
+  }
+
   private static optionalLabel(parsed: Record<string, unknown>, key: string, filePath: string): string | null
   {
     const value = parsed[key];

@@ -70,7 +70,7 @@ describe("LocalgateBanner", () =>
 
   // An alias used to announce itself in one line, which is why the scripts that register one printed their
   // own `.localhost` block and never mentioned the shared name at all.
-  it("gives an alias the same shape, and the command that puts it back rather than a restart", () =>
+  it("gives an alias the same shape, and the command that drops it rather than a restart", () =>
   {
     const text = LocalgateBanner.render(route({
       names: ["cms.localhost", "cms.dev.example.com"],
@@ -84,7 +84,8 @@ describe("LocalgateBanner", () =>
     expect(text).toContain("localgate   cms   ·   alias   ·   mode lan");
     expect(text).toContain("http://cms.dev.example.com");
     expect(text).toContain("upstream   127.0.0.1:8002");
-    expect(text).toContain("re-add     localgate alias cms 8002");
+    expect(text).toContain("remove     localgate alias --remove cms");
+    expect(text).not.toContain("re-add");
     expect(text).not.toContain("localgate restart");
   });
 

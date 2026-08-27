@@ -1,3 +1,4 @@
+import { LocalgateNames } from "../config/localgateNames.ts";
 import type { LocalgateRegistry, LocalgateRoute } from "./localgateRegistry.ts";
 
 export type LocalgateRestartRequest = (route: LocalgateRoute) => Promise<void>;
@@ -57,31 +58,61 @@ export class LocalgateHealth
     this.registry.update(route.id, { state: withinGrace ? "starting" : "dead" });
   }
 
+  // `localgate restart` refuses an alias, because there is no process localgate owns to restart, so the
+  // two kinds cannot share the closing advice.
   unresponsiveMessage(route: LocalgateRoute): string
   {
-    const target = route.cwd ?? route.names[0];
-    return [
+    const stalled = [
       `localgate: ${route.names[0]} is not responding.`,
       "",
-      `The dev server accepted the connection but did not answer ${LocalgateHealth.failuresBeforeUnresponsiveConst} requests in a row`,
+      `The server accepted the connection but did not answer ${LocalgateHealth.failuresBeforeUnresponsiveConst} requests in a row`,
       `(${LocalgateHealth.requestTimeoutMsConst / 1000} s each). It is wedged, or it is paused in a debugger.`,
-      "",
-      "Restart it with:",
-      `  localgate restart ${route.names[0].split(".")[0]}`,
-      `  (or run localgate restart in ${target})`,
       ""
-    ].join("\n");
+    ];
+
+    if (route.kind == "app")
+      return [
+        ...stalled,
+        "Restart it with:",
+        `  localgate restart ${LocalgateNames.shortName(route.names[0])}`,
+        `  (or run localgate restart in ${route.cwd ?? route.names[0]})`,
+        ""
+      ].join("\n");
+    else if (route.kind == "alias")
+      return [
+        ...stalled,
+        `The alias points at 127.0.0.1:${route.port}, a process localgate does not own, so restart it`,
+        "yourself. Drop the alias with:",
+        `  localgate alias --remove ${LocalgateNames.shortName(route.names[0])}`,
+        ""
+      ].join("\n");
+    else
+      throw new Error(`Unknown route kind: ${JSON.stringify(route.kind)}`);
   }
 
+  // An alias points at a process localgate does not own, so neither half of the app advice applies to it:
+  // there is no editor to start it from, and `prune` deliberately leaves aliases alone.
   deadMessage(route: LocalgateRoute): string
   {
-    return [
-      `localgate: nothing is listening for ${route.names[0]}.`,
-      "",
-      "The route is registered but its dev server is gone. Start it again from your editor,",
-      "or run localgate prune to drop the route.",
-      ""
-    ].join("\n");
+    if (route.kind == "app")
+      return [
+        `localgate: nothing is listening for ${route.names[0]}.`,
+        "",
+        "The route is registered but its dev server is gone. Start it again from your editor,",
+        "or run localgate prune to drop the route.",
+        ""
+      ].join("\n");
+    else if (route.kind == "alias")
+      return [
+        `localgate: nothing is listening for ${route.names[0]}.`,
+        "",
+        `The alias points at 127.0.0.1:${route.port} and nothing answers there. Start whatever should`,
+        "listen on that port, or drop the alias with:",
+        `  localgate alias --remove ${LocalgateNames.shortName(route.names[0])}`,
+        ""
+      ].join("\n");
+    else
+      throw new Error(`Unknown route kind: ${JSON.stringify(route.kind)}`);
   }
 
   startingMessage(route: LocalgateRoute): string

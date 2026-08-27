@@ -127,6 +127,15 @@ export class LocalgateProxy
 
   private forward(route: LocalgateRoute, request: IncomingMessage, response: ServerResponse): void
   {
+    // A route pointing at the proxy's own port turns every listener into a bridge to the loopback one:
+    // the request comes back in as loopback, so a LAN caller reaches the control API, and any other path
+    // loops until the machine runs out of sockets. Refused here rather than at each registration point,
+    // because this is the one place every route is dialled from.
+    if (this.boundPorts().includes(route.port))
+      return LocalgateProxy.sendText(response, 502, `localgate: ${route.names[0]} points at localgate's own `
+        + `port ${route.port}, which would only send the request back here. Point it at the port the `
+        + "service actually listens on.\n");
+
     const headers = { ...request.headers };
     LocalgateHeaderRewrite.apply(request.url ?? "/", headers, request.headers.host ?? "", route.names[0]!);
 
