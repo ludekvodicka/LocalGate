@@ -9,7 +9,8 @@ import { LocalgateProxyClient } from "../client/localgateProxyClient.ts";
 import { LocalgateMachineConfig, type LocalgateMachineSettings } from "../config/localgateMachineConfig.ts";
 import { LocalgateNames } from "../config/localgateNames.ts";
 import { LocalgateProjectConfig, type LocalgateProjectSettings } from "../config/localgateProjectConfig.ts";
-import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
+import { LocalgateRouteConflictError } from "../proxy/localgateRegistry.ts";
+import type { LocalgateRoute, LocalgateRouteRegistration } from "../proxy/localgateRegistry.ts";
 import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateEnvRewrite } from "./localgateEnvRewrite.ts";
 import { LocalgateNodeOptions } from "./localgateNodeOptions.ts";
@@ -38,6 +39,7 @@ export class LocalgateRunner
   private readonly logs: string[] = [];
   private stopping = false;
   private restarting = false;
+  private reportedLostRoute = false;
   private exitCode = 0;
 
   constructor(
@@ -139,14 +141,16 @@ export class LocalgateRunner
 
     const runtime = this.loadRuntime();
 
-    const blocked = await this.clearPredecessor(runtime.project);
-    if (blocked != 0) return blocked;
+    // Before the check and not after it: the route table lives in the proxy, so asking what already
+    // runs while the proxy is down answers "nothing" about a machine full of dev servers.
+    await LocalgateProxyClient.ensureRunning();
+
+    if (!await this.clearPredecessor(runtime.project)) return 1;
 
     const port = await LocalgateRunner.freePort();
     const controlUrl = await this.startControlServer();
 
-    await LocalgateProxyClient.ensureRunning();
-    const route = await LocalgateProxyClient.register({
+    const route = await this.claim({
       names: runtime.names,
       port,
       kind: "app",
@@ -158,6 +162,13 @@ export class LocalgateRunner
       childPid: null,
       debuggerAttached: LocalgateRunner.debuggerAttached()
     });
+
+    if (!route)
+    {
+      await this.cleanup();
+      return 1;
+    }
+
     this.route = route;
     this.runtime = runtime;
 
@@ -177,28 +188,65 @@ export class LocalgateRunner
   // Starting a second dev server for one project used to fail twice over: the registry handed this
   // runner the name and left the old one holding its port unreachable, and the dev server itself then
   // refused because of its own lock. So the collision is settled here, before anything is claimed.
-  // Returns 0 to go ahead, or the exit code to leave with.
-  private async clearPredecessor(project: LocalgateProjectSettings): Promise<number>
+  // Returns whether the run may go ahead.
+  private async clearPredecessor(project: LocalgateProjectSettings): Promise<boolean>
   {
     // By name, because that is what the registry would take away, and by directory, because that is
     // what a dev server's own lock is keyed on.
     const existing = await LocalgateProxyClient.resolve({ name: project.name })
       ?? await LocalgateProxyClient.resolve({ directory: project.packageDirectory });
 
-    if (!existing) return 0;
+    if (!existing) return true;
+    return this.settle(existing);
+  }
 
+  // The registration is the second place a collision shows up, and the one no check can prevent: the
+  // route table lives in the proxy, so between the check above and this claim another runner can take
+  // the name. A proxy that has just started is that race in practice - its table is empty, and the live
+  // runners refill it from their own heartbeats up to ten seconds later, so the check sees a free name
+  // that is not free. This used to end the process with a stack trace. It is now settled exactly like
+  // the collision the check finds, and the claim is made once more.
+  private async claim(registration: LocalgateRouteRegistration): Promise<LocalgateRoute | null>
+  {
+    try
+    {
+      return await LocalgateProxyClient.register(registration);
+    }
+    catch (error)
+    {
+      if (!(error instanceof LocalgateRouteConflictError)) throw error;
+      if (!await this.settle(error.existing)) return null;
+    }
+
+    try
+    {
+      return await LocalgateProxyClient.register(registration);
+    }
+    catch (error)
+    {
+      if (!(error instanceof LocalgateRouteConflictError)) throw error;
+      process.stderr.write(`localgate: ${error.existing.names[0]} was claimed by runner `
+        + `${error.existing.runnerPid ?? "?"} while this one was taking it over - run again\n`);
+      return null;
+    }
+  }
+
+  // What happens to whoever holds the name: an alias is not ours to take, a route whose runner is gone
+  // goes without a question, and a live runner is somebody's session, so it is asked about first.
+  private async settle(existing: LocalgateRoute): Promise<boolean>
+  {
     if (existing.kind == "alias")
     {
       process.stderr.write(`localgate: ${existing.names[0]} is an alias pointing at 127.0.0.1:${existing.port}, `
         + "so this project cannot claim that name.\n"
         + "Remove the alias, or give the project another name in package.json.\n");
-      return 1;
+      return false;
     }
 
     if (!await LocalgateRunner.runnerAlive(existing))
     {
       await LocalgateRunner.reclaimAbandoned(existing);
-      return 0;
+      return true;
     }
 
     if (!this.force)
@@ -211,19 +259,19 @@ export class LocalgateRunner
       {
         process.stderr.write("localgate: nothing to ask on, this is not a terminal. "
           + "Re-run with --force to take it over.\n");
-        return 1;
+        return false;
       }
 
       if (!await LocalgateRunner.askTakeover())
       {
         process.stdout.write("localgate: left it running. Reach it at "
           + `${LocalgateUrl.forName(existing.names[0], LocalgateProxyClient.proxyPort())}\n`);
-        return 1;
+        return false;
       }
     }
 
     await this.stopPredecessor(existing);
-    return 0;
+    return true;
   }
 
   // A runner that died without cleaning up leaves a row behind, and usually its dev server too: the
@@ -482,10 +530,23 @@ export class LocalgateRunner
             childPid: this.child?.pid ?? null,
             debuggerAttached: this.route.debuggerAttached
           });
+          this.reportedLostRoute = false;
           process.stdout.write("localgate: proxy restarted, route re-registered\n");
         }
         catch (error)
         {
+          // Another runner serves this name now, so every following heartbeat fails the same way. Said
+          // once, because this prints into a terminal somebody is working in.
+          if (error instanceof LocalgateRouteConflictError)
+          {
+            if (this.reportedLostRoute) return;
+            this.reportedLostRoute = true;
+            process.stderr.write(`localgate: ${error.existing.names[0]} is served by runner `
+              + `${error.existing.runnerPid ?? "?"} now, so this runner has no route left. `
+              + "Stop it with Ctrl+C.\n");
+            return;
+          }
+
           process.stderr.write(`localgate: could not re-register the route: ${String(error)}\n`);
         }
       })();

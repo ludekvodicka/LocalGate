@@ -141,6 +141,11 @@ A route whose runner is already gone is not a question. Its dev server usually o
 holds the port - that is the orphan a framework lock trips over - so it is cleared and the name reused
 without asking.
 
+The same question is asked again if the name is taken between finding it free and claiming it. The
+route table lives in the proxy, so a proxy that has just started has an empty one, and the runners that
+were already running refill it from their heartbeats a few seconds later - a window in which the check
+sees a free name that is not free.
+
 ## Commands
 
 | Command | What it does |
