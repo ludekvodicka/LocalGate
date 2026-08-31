@@ -73,7 +73,8 @@ describe("LocalgateEnvRewrite", () =>
 
     expect(result.NEXT_PUBLIC_APP_URL).toBe("http://myapp.localhost:8080");
     expect(result.NEXTAUTH_URL).toBe("http://myapp.localhost:8080/api/auth");
-    expect(result.APP_BACKEND_WAGTAIL_API_URL).toBe("http://cms.localhost/api/v2");
+    expect(result.APP_BACKEND_WAGTAIL_API_URL).toBe("http://cms.localhost:8080/api/v2");
+    expect(result.APP_BACKEND_API_URL).toBe("http://api.localhost:8080");
   });
 
   it("carries both the shared name and the port when neither is the default", () =>

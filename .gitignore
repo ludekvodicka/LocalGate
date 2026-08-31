@@ -20,12 +20,12 @@ coverage/
 # owner-only files. Kept in INTERNAL SVN so it syncs across our PCs, never public.
 .private/
 
-# Internal Claude Code project commands (e.g. /commit-github → the publish flow in .private/).
+# Internal Claude Code project commands, including the reviewed GitHub deployment workflow.
 # Kept in INTERNAL SVN, never public — it references tooling a public clone doesn't have.
 # Claude Code loads it from the filesystem regardless of git.
 .claude/
 
-# Our internal project instructions — SVN-first workflow, publish flow, house style. Needed by OUR
+# Our internal project instructions: SVN, public Git, checkpoints and house style. Needed by OUR
 # sessions (loaded from disk) + kept in INTERNAL SVN, but not part of the public repo: a public
 # clone uses CONTRIBUTING.md instead. (Only the repo-root ones.)
 /CLAUDE.md

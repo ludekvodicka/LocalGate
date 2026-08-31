@@ -12,6 +12,7 @@ import { LocalgateProjectConfig, type LocalgateProjectSettings } from "../config
 import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
 import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateEnvRewrite } from "./localgateEnvRewrite.ts";
+import { LocalgateNodeOptions } from "./localgateNodeOptions.ts";
 import { LocalgateProcessTree } from "./localgateProcessTree.ts";
 
 type LocalgateRunnerRuntime =
@@ -312,8 +313,12 @@ export class LocalgateRunner
     const scripts = LocalgateRunner.readScripts(runtime.project.packageDirectory);
     const command = LocalgateRunner.withPortFlag(this.command, scripts, port);
 
-    const env = LocalgateEnvRewrite.apply(process.env, runtime.project.mode, runtime.machine,
-      LocalgateProxyClient.proxyPort());
+    const env = LocalgateNodeOptions.apply(LocalgateEnvRewrite.apply(
+      process.env,
+      runtime.project.mode,
+      runtime.machine,
+      LocalgateProxyClient.proxyPort()
+    ));
     env.PORT = String(port);
 
     // One command string rather than a command plus an args array: `npm run dev` on Windows is a .cmd,

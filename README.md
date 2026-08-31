@@ -221,6 +221,8 @@ With that file present, `myapp` in mode `lan` also answers on `myapp.dev.example
 environment variables (`NEXT_PUBLIC_*`, `*_PUBLIC_URL`, `AUTH_URL`, `NEXTAUTH_URL`) are rewritten from
 `.localhost` to the name selected by the current mode on the way into the dev server. Public URLs use
 HTTPS and never carry the proxy's internal LAN port. Server-side variables stay on `.localhost`.
+Node children get a lookup hook for that reserved suffix, so Fetch and the standard HTTP clients reach
+the local proxy even when the operating system resolver does not expand nested localhost names.
 
 For reaching an app from outside the LAN, `localgate cloudflare-info` prints the exact prefixed DNS
 record and tunnel ingress entry. It prints them and stops: localgate holds no API token and sends
@@ -297,9 +299,9 @@ build step.
 Early. Windows, Linux and macOS: the kill that makes `restart` reliable goes through `taskkill /T` on
 Windows and the child's process group elsewhere, and the port-holder lookup is PowerShell or `lsof`.
 
-One rough edge on macOS: browsers resolve `*.localhost` to loopback by RFC 6761, but the system
-resolver does not, so `curl http://myapp.localhost:8080` and server-to-server calls by name need an
-`/etc/hosts` entry there. Browsers are fine.
+Browsers and Node processes started through Localgate resolve `*.localhost` to loopback. Other
+command-line programs still use the operating system resolver, so on a system that does not expand
+nested localhost names they need an explicit resolver option or a hosts entry.
 
 Bug reports and ideas are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md), and
 [SECURITY.md](SECURITY.md) for anything security-related. Licensed under

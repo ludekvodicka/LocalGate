@@ -2,7 +2,7 @@
 # Windows (CRLF), the published tree is LF.
 * text=auto
 
-# Paths excluded from `git archive` exports. They live in the internal SVN tree but must never ship
-# in a public release; the publish flow strips them too, this is the second line of defence.
+# Internal paths are Git-ignored. These export rules are a second line of defence if one is ever
+# staged accidentally.
 .aidocs/ export-ignore
 .private/ export-ignore
