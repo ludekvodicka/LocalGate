@@ -8,10 +8,12 @@ import { LocalgateProjectConfig } from "../config/localgateProjectConfig.ts";
 import { LocalgateConfigReporter } from "../config/localgateConfigReport.ts";
 import { LocalgateAliasRoute } from "../proxy/localgateAliasRoute.ts";
 import { LocalgateProxyHost } from "../proxy/localgateProxyHost.ts";
+import { LocalgateStartPage } from "../proxy/localgateStartPage.ts";
 import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateRouteConflictError } from "../proxy/localgateRegistry.ts";
 import type { LocalgateRoute } from "../proxy/localgateRegistry.ts";
 import { LocalgateRunner } from "../run/localgateRunner.ts";
+import { LocalgateRunnerControl } from "../run/localgateRunnerControl.ts";
 
 export class LocalgateCli
 {
@@ -82,6 +84,9 @@ export class LocalgateCli
       process.stdout.write("\n");
     }
 
+    // Only with a route in hand, because the page is served by the proxy and the proxy is not running
+    // when nothing is registered - naming it above would send the reader to a refused connection.
+    process.stdout.write(`All of this in a browser: ${LocalgateStartPage.localUrl(proxyPort)}\n`);
     return 0;
   }
 
@@ -166,7 +171,8 @@ export class LocalgateCli
     const response = await fetch(`${route.controlUrl}/${action}`, { method: "POST" });
     if (!response.ok)
     {
-      process.stderr.write(`localgate: ${action} failed, the runner answered ${response.status}\n`);
+      const detail = LocalgateRunnerControl.refusalDetail(await response.text().catch(() => ""));
+      process.stderr.write(`localgate: ${action} failed, the runner answered ${response.status}${detail}\n`);
       return 1;
     }
 
@@ -192,12 +198,30 @@ export class LocalgateCli
   {
     if (args[0] == "--remove") return LocalgateCli.aliasRemove(args[1]);
 
-    const [name, portText] = args;
+    // Everything after --stop is the command, kept out of the positional pair so a name and a port can
+    // still be read the way they always were.
+    const stopIndex = args.indexOf("--stop");
+    const stop = stopIndex >= 0 ? args.slice(stopIndex + 1).join(" ").trim() : null;
+    const [name, portText] = stopIndex >= 0 ? args.slice(0, stopIndex) : args;
     const port = Number.parseInt(portText ?? "", 10);
 
     if (!name || !Number.isFinite(port))
     {
-      process.stderr.write("localgate: usage is localgate alias <name> <port>\n");
+      process.stderr.write("localgate: usage is localgate alias <name> <port> [--stop \"<command>\"]\n");
+      return 1;
+    }
+
+    if (stop !== null && stop.length == 0)
+    {
+      process.stderr.write("localgate: --stop needs the command that stops the service, "
+        + "for example --stop \"docker stop myservice\"\n");
+      return 1;
+    }
+
+    if (LocalgateNames.isReserved(name))
+    {
+      process.stderr.write(`localgate: "${LocalgateNames.startNameConst}" is reserved for the start page, `
+        + "which lists every route. Pick another name for the alias.\n");
       return 1;
     }
 
@@ -240,7 +264,7 @@ export class LocalgateCli
     // the banner, because the alias is already live and useful - it just will not come back.
     try
     {
-      LocalgateAliasStore.add({ name, port });
+      LocalgateAliasStore.add({ name, port, stop });
     }
     catch (error)
     {
@@ -379,17 +403,16 @@ export class LocalgateCli
 
   private static routeUrls(route: LocalgateRoute, proxyPort: number): string[]
   {
-    return route.names.map((name, index) => route.mode == "internet" && index == 2
-      ? `https://${name}`
-      : LocalgateUrl.forName(name, proxyPort));
+    return LocalgateUrl.routeAddresses(route, proxyPort).map(address => address.url);
   }
 
   private static printUsage(): void
   {
     process.stdout.write(
       "localgate - stable names for local dev servers\n\n" +
-      "  localgate run [--force] <cmd...>  run a dev server behind its name\n" +
-      "                                  --force takes over a running one without asking\n" +
+      "  localgate run [--force] <cmd...>  run a dev server behind its name; one already\n" +
+      "                                  running for the project is stopped first\n" +
+      "                                  --force is needed for that without a terminal\n" +
       "  localgate list [--json]         show active routes\n" +
       "  localgate status [app] [--json] state of one route (defaults to this directory)\n" +
       "  localgate restart [app]         restart a route's dev server\n" +
@@ -397,11 +420,14 @@ export class LocalgateCli
       "  localgate logs [app] [--lines N]  tail a route's captured output\n" +
       "  localgate alias <name> <port>   register a static route (e.g. a docker service); it is\n" +
       "                                  remembered and comes back when the proxy restarts\n" +
+      "        [--stop \"<command>\"]      what stops that service, e.g. \"docker stop myservice\";\n" +
+      "                                  it gives the alias a stop button on the start page\n" +
       "  localgate alias --remove <name> drop a static route and forget it\n" +
       "  localgate config [dir] [--json] machine + project config and the names it implies\n" +
       "  localgate cloudflare-info       print the DNS and ingress entries to paste\n" +
       "  localgate prune                 drop routes whose runner is gone\n\n" +
-      "[app] is optional: with no argument a command acts on the route owning the current directory.\n"
+      "[app] is optional: with no argument a command acts on the route owning the current directory.\n" +
+      `Every route, with its addresses, is also a page: ${LocalgateStartPage.localUrl(LocalgateProxyClient.proxyPort())}\n`
     );
   }
 }

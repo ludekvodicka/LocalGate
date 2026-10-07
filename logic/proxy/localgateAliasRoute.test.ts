@@ -55,7 +55,7 @@ describe("LocalgateAliasRoute", () =>
 
     const restored = LocalgateAliasRoute.restore(
       registry,
-      [{ name: "myapp", port: 8_001 }, { name: "cms", port: 8_002 }],
+      [{ name: "myapp", port: 8_001, stop: null }, { name: "cms", port: 8_002, stop: null }],
       machine,
       "2026-08-27T10:00:00.000Z"
     );
@@ -75,7 +75,7 @@ describe("LocalgateAliasRoute", () =>
     const registry = new LocalgateRegistry();
 
     LocalgateAliasRoute.restore(registry,
-      [{ name: "myapp", port: 8_001 }, { name: "myapp", port: 8_003 }], null, "2026-08-27T10:00:00.000Z");
+      [{ name: "myapp", port: 8_001, stop: null }, { name: "myapp", port: 8_003, stop: null }], null, "2026-08-27T10:00:00.000Z");
 
     expect(registry.all()).toHaveLength(1);
     expect(registry.byName("myapp")?.port).toBe(8_003);

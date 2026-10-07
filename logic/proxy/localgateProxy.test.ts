@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect } from "node:net";
+import type { LocalgateMachineSettings } from "../config/localgateMachineConfig.ts";
 import { LocalgateControlApi } from "./localgateControlApi.ts";
 import { LocalgateHealth } from "./localgateHealth.ts";
 import { LocalgateProxy } from "./localgateProxy.ts";
 import { LocalgateRegistry, type LocalgateRouteRegistration } from "./localgateRegistry.ts";
+import { LocalgateStartPage } from "./localgateStartPage.ts";
 
 type Harness = {
   proxy: LocalgateProxy;
@@ -14,6 +16,8 @@ type Harness = {
   // the test binds no real network interface; what differs is the reach the proxy answers it with.
   lanPort: number | null;
   upstreamPort: number;
+  // The routes the start page asked a runner to end, in order.
+  stopped: string[];
   idle: () => number;
   stop: () => Promise<void>;
 };
@@ -57,7 +61,8 @@ describe("LocalgateProxy", () =>
     return { server, port: address.port };
   };
 
-  const startProxy = async (options: { gracePeriodMs?: number; upstreamPort?: number; lanIp?: string } = {}): Promise<Harness> =>
+  const startProxy = async (options: { gracePeriodMs?: number; upstreamPort?: number; lanIp?: string;
+    machine?: LocalgateMachineSettings; aliasStops?: Map<string, string> } = {}): Promise<Harness> =>
   {
     const upstream = options.upstreamPort ? null : await startUpstream();
     const upstreamPort = options.upstreamPort ?? upstream!.port;
@@ -65,7 +70,14 @@ describe("LocalgateProxy", () =>
     const registry = new LocalgateRegistry();
     let idleCount = 0;
     const health = new LocalgateHealth(registry, false, async () => {});
-    const proxy = new LocalgateProxy(registry, health, new LocalgateControlApi(registry, () => proxy.checkIdle()), {
+    // Port 80 for the start page, which prints addresses for a person rather than for this test's
+    // ephemeral listener: what it must get right is the name, not the port the harness landed on.
+    const stopped: string[] = [];
+    const startPage = new LocalgateStartPage(registry, options.machine ?? null, 80, {
+      aliasStopCommands: () => options.aliasStops ?? new Map(),
+      stop: async route => { stopped.push(route.names[0]!); }
+    });
+    const proxy = new LocalgateProxy(registry, health, new LocalgateControlApi(registry, () => proxy.checkIdle()), startPage, {
       port: 0,
       lanIp: options.lanIp ?? null,
       gracePeriodMs: options.gracePeriodMs ?? 50,
@@ -81,6 +93,7 @@ describe("LocalgateProxy", () =>
       port: ports[0]!,
       lanPort: ports[1] ?? null,
       upstreamPort,
+      stopped,
       idle: () => idleCount,
       stop: async () =>
       {
@@ -116,10 +129,11 @@ describe("LocalgateProxy", () =>
     debuggerAttached: false
   });
 
-  const call = (port: number, path: string, headers: IncomingHttpHeaders, body?: string) =>
+  const call = (port: number, path: string, headers: IncomingHttpHeaders, body?: string, method?: string) =>
     new Promise<{ status: number; text: string; headers: IncomingHttpHeaders }>((resolve, reject) =>
     {
-      const request = httpRequest({ host: "127.0.0.1", port, path, method: body ? "POST" : "GET", headers: headers as never }, response =>
+      const request = httpRequest({ host: "127.0.0.1", port, path,
+        method: method ?? (body ? "POST" : "GET"), headers: headers as never }, response =>
       {
         const chunks: Buffer[] = [];
         response.on("data", chunk => chunks.push(chunk as Buffer));
@@ -217,6 +231,79 @@ describe("LocalgateProxy", () =>
     expect(result.status).toBe(404);
     expect(result.text).toContain("nothing is registered");
     expect(result.text).toContain("web.localhost");
+    expect(result.text).toContain("start.localhost");
+  });
+
+  it("serves the start page on its own name, ahead of the route table", async () =>
+  {
+    const harness = await startProxy();
+    harness.registry.register(registration(harness.upstreamPort, ["web.localhost", "web.dev.example.com"]),
+      new Date().toISOString());
+
+    const result = await call(harness.port, "/", { host: "start.localhost" });
+
+    expect(result.status).toBe(200);
+    expect(result.headers["content-type"]).toContain("text/html");
+    expect(result.text).toContain("http://web.localhost");
+    expect(result.text).toContain("http://web.dev.example.com");
+  });
+
+  // The page is the machine's inventory, so off the machine it is asked for by the machine's own name
+  // and answers with the shared routes alone.
+  it("serves the start page on the LAN only under the shared name", async () =>
+  {
+    const machine: LocalgateMachineSettings = {
+      label: "dev", baseDomain: "example.com", lanIp: "127.0.0.1", publicPrefix: null,
+      autoRestart: false, proxyPort: null
+    };
+    const harness = await startProxy({ lanIp: "127.0.0.1", machine });
+    harness.registry.register({ ...registration(harness.upstreamPort, ["tool.localhost"]), mode: "local" },
+      new Date().toISOString());
+
+    expect((await call(harness.lanPort!, "/", { host: "start.localhost" })).status).toBe(404);
+
+    const shared = await call(harness.lanPort!, "/", { host: "start.dev.example.com" });
+    expect(shared.status).toBe(200);
+    expect(shared.text).not.toContain("tool");
+
+    expect((await call(harness.port, "/", { host: "start.dev.example.com" })).text).toContain("tool.localhost");
+  });
+
+  it("ends a dev server when the start page's own form asks it to", async () =>
+  {
+    const harness = await startProxy();
+    harness.registry.register({ ...registration(harness.upstreamPort, ["web.localhost"]),
+      controlUrl: "http://127.0.0.1:52000" }, new Date().toISOString());
+
+    const result = await call(harness.port, "/stop?name=web",
+      { host: "start.localhost", origin: "http://start.localhost" }, undefined, "POST");
+
+    expect(result.status).toBe(303);
+    expect(result.headers.location).toBe("/?stopped=web");
+    expect(harness.stopped).toEqual(["web.localhost"]);
+  });
+
+  // A form POST needs no permission to leave the page it sits on, so without an origin check any site
+  // the developer happens to open could end every dev server on the machine.
+  it("refuses a stop that came from another site, or from the LAN listener", async () =>
+  {
+    const machine: LocalgateMachineSettings = {
+      label: "dev", baseDomain: "example.com", lanIp: "127.0.0.1", publicPrefix: null,
+      autoRestart: false, proxyPort: null
+    };
+    const harness = await startProxy({ lanIp: "127.0.0.1", machine });
+    harness.registry.register({ ...registration(harness.upstreamPort, ["web.localhost", "web.dev.example.com"]),
+      controlUrl: "http://127.0.0.1:52000" }, new Date().toISOString());
+
+    const foreign = await call(harness.port, "/stop?name=web",
+      { host: "start.localhost", origin: "http://anything.example" }, undefined, "POST");
+    expect(foreign.status).toBe(403);
+
+    const fromLan = await call(harness.lanPort!, "/stop?name=web",
+      { host: "start.dev.example.com", origin: "http://start.dev.example.com" }, undefined, "POST");
+    expect(fromLan.status).toBe(404);
+
+    expect(harness.stopped).toEqual([]);
   });
 
   it("reports a refused upstream as still starting rather than as a crash", async () =>
@@ -328,6 +415,95 @@ describe("LocalgateProxy", () =>
     expect((await post({ ...registration(harness.upstreamPort, ["web.localhost"]), kind: "gadget" })).status).toBe(400);
     expect((await post({ ...registration(harness.upstreamPort, []) })).status).toBe(400);
     expect(harness.registry.isEmpty()).toBe(true);
+  });
+
+  // `/ok` answers at once, `/sse` sends one event and stays open, `/hold` never answers. `closed` resolves
+  // with the path of the first response the upstream saw end before it finished.
+  const startHoldingUpstream = async () =>
+  {
+    let reportClosed: (path: string) => void = () => {};
+    const closed = new Promise<string>(resolve => { reportClosed = resolve; });
+
+    const server = createServer((request, response) =>
+    {
+      response.once("close", () =>
+      {
+        if (!response.writableFinished) reportClosed(request.url ?? "");
+      });
+
+      if (request.url == "/ok") response.end("ok");
+      else if (request.url == "/sse")
+      {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write("data: first\n\n");
+      }
+    });
+
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address == "string") throw new Error("no upstream port");
+
+    const close = async () =>
+    {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    };
+
+    return { port: address.port, closed, close };
+  };
+
+  // Well under the proxy's own first-byte timeout, so only the browser leaving can end the request in time.
+  const promptly = <T>(promise: Promise<T>) => Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("upstream request still open")), 2_000))
+  ]);
+
+  it("ends an open event stream on the dev server when the browser leaves", async () =>
+  {
+    const upstream = await startHoldingUpstream();
+    try
+    {
+      const harness = await startProxy({ upstreamPort: upstream.port });
+      harness.registry.register(registration(upstream.port, ["web.localhost"]), new Date().toISOString());
+
+      const client = httpRequest({ host: "127.0.0.1", port: harness.port, path: "/sse",
+        headers: { host: "web.localhost" } });
+      client.once("error", () => {});
+      client.once("response", response => response.once("data", () => client.destroy()));
+      client.end();
+
+      expect(await promptly(upstream.closed)).toBe("/sse");
+    }
+    finally
+    {
+      await upstream.close();
+    }
+  });
+
+  it("ends a request still waiting for the dev server when the browser leaves, without blaming the route", async () =>
+  {
+    const upstream = await startHoldingUpstream();
+    try
+    {
+      const harness = await startProxy({ upstreamPort: upstream.port });
+      const route = harness.registry.register(registration(upstream.port, ["web.localhost"]), new Date().toISOString());
+      await call(harness.port, "/ok", { host: "web.localhost" });
+      expect(harness.registry.byId(route.id)?.state).toBe("healthy");
+
+      const client = httpRequest({ host: "127.0.0.1", port: harness.port, path: "/hold",
+        headers: { host: "web.localhost" } });
+      client.once("error", () => {});
+      client.end();
+      setTimeout(() => client.destroy(), 100);
+
+      expect(await promptly(upstream.closed)).toBe("/hold");
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(harness.registry.byId(route.id)?.state).toBe("healthy");
+    }
+    finally
+    {
+      await upstream.close();
+    }
   });
 
   it("proxies a websocket upgrade, which is what makes HMR work", async () =>

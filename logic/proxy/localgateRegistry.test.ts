@@ -240,4 +240,19 @@ describe("LocalgateRegistry", () =>
     expect(() => registry.update(web.id, { names: ["web.localhost", "api.localhost"] }))
       .toThrow(LocalgateRouteConflictError);
   });
+
+  // The proxy answers the start page before it looks in this table, so a route that took the name would
+  // be registered, listed by every command, and never reachable in a browser.
+  it("refuses the name the start page answers on, however the route arrives", () =>
+  {
+    const registry = new LocalgateRegistry();
+
+    expect(() => registry.register(app(["start.localhost", "start.dev.example.com"], null), now))
+      .toThrow(/reserved/);
+    expect(() => registry.register(alias(["start.localhost"], 8_001), now)).toThrow(/reserved/);
+
+    const web = registry.register(app(["web.localhost"], null), now);
+    expect(() => registry.update(web.id, { names: ["start.localhost"] })).toThrow(/reserved/);
+    expect(registry.byId(web.id)?.names).toEqual(["web.localhost"]);
+  });
 });

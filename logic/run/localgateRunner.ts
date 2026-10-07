@@ -1,9 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:http";
 import { readFileSync } from "node:fs";
 import { createServer as createSocketServer } from "node:net";
 import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { LocalgateBanner } from "../cli/localgateBanner.ts";
 import { LocalgateProxyClient } from "../client/localgateProxyClient.ts";
 import { LocalgateMachineConfig, type LocalgateMachineSettings } from "../config/localgateMachineConfig.ts";
@@ -11,10 +9,10 @@ import { LocalgateNames } from "../config/localgateNames.ts";
 import { LocalgateProjectConfig, type LocalgateProjectSettings } from "../config/localgateProjectConfig.ts";
 import { LocalgateRouteConflictError } from "../proxy/localgateRegistry.ts";
 import type { LocalgateRoute, LocalgateRouteRegistration } from "../proxy/localgateRegistry.ts";
-import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 import { LocalgateEnvRewrite } from "./localgateEnvRewrite.ts";
 import { LocalgateNodeOptions } from "./localgateNodeOptions.ts";
-import { LocalgateProcessTree } from "./localgateProcessTree.ts";
+import { LocalgateProcessTree, type LocalgateKillOutcome } from "./localgateProcessTree.ts";
+import { LocalgateRunnerControl } from "./localgateRunnerControl.ts";
 
 type LocalgateRunnerRuntime =
 {
@@ -31,9 +29,11 @@ export class LocalgateRunner
   private static readonly logLinesKeptConst = 400;
   private static readonly heartbeatMsConst = 10_000;
   private static readonly takeoverTimeoutMsConst = 10_000;
+  private static readonly replacementTimeoutMsConst = 10_000;
+  private static readonly replacementPollMsConst = 50;
 
   private child: ChildProcess | null = null;
-  private controlServer: Server | null = null;
+  private control: LocalgateRunnerControl | null = null;
   private route: LocalgateRoute | null = null;
   private runtime: LocalgateRunnerRuntime | null = null;
   private readonly logs: string[] = [];
@@ -81,11 +81,14 @@ export class LocalgateRunner
     const body = scripts[script] ?? "";
     if (!body.includes("next")) return command;
 
+    // pnpm forwards a separator to the script, where Next treats the following flags as positional arguments.
+    if (runner == "pnpm" || runner == "pnpm.cmd") return [...command, "-p", String(port)];
+
     return [...command, "--", "-p", String(port)];
   }
 
-  // Shown before the question, and instead of it when there is no terminal to ask in: whoever is about
-  // to lose their dev server should be able to recognise it from this alone.
+  // Shown before the takeover, and instead of it when there is no terminal: whoever is about to lose
+  // their dev server should be able to recognise it from this alone.
   static describeRunning(route: LocalgateRoute): string
   {
     const lines = [
@@ -114,6 +117,19 @@ export class LocalgateRunner
     return registered?.runnerPid == runnerPid && registered.controlUrl == route.controlUrl;
   }
 
+  // Whether the kill got far enough for a restart or a stop to be called done, and what to report when it
+  // did not. The kill used to be fire-and-forget, so a taskkill the system refused left the old dev server
+  // holding the port while `localgate restart` printed "restarted" and the browser went on being served
+  // the old build. A port that came free is the fact this trusts; the errors only say why it did not.
+  static killFailure(route: LocalgateRoute, pid: number, outcome: LocalgateKillOutcome,
+    action: "restarted" | "stopped"): string | null
+  {
+    if (outcome.released) return null;
+
+    return `${route.names[0]} still answers on 127.0.0.1:${route.port} after killing ${pid}`
+      + `${LocalgateProcessTree.describeErrors(outcome)} - it was not ${action}`;
+  }
+
   static async freePort(): Promise<number>
   {
     return new Promise<number>((resolve, reject) =>
@@ -140,6 +156,16 @@ export class LocalgateRunner
     if (this.command.length == 0) throw new Error("localgate run needs a command, for example: localgate run npm run dev");
 
     const runtime = this.loadRuntime();
+
+    // Refused before the proxy is even asked for: the name belongs to localgate's own start page, so the
+    // registration would fail anyway, and here the message can name the file that decides it.
+    if (LocalgateNames.isReserved(runtime.project.name))
+    {
+      process.stderr.write(`localgate: "${LocalgateNames.startNameConst}" is reserved for localgate's start `
+        + `page, so this project cannot use it as a name. Set "localgate": { "name": "..." } in `
+        + `${runtime.project.packageDirectory}/package.json.\n`);
+      return 1;
+    }
 
     // Before the check and not after it: the route table lives in the proxy, so asking what already
     // runs while the proxy is down answers "nothing" about a machine full of dev servers.
@@ -232,7 +258,11 @@ export class LocalgateRunner
   }
 
   // What happens to whoever holds the name: an alias is not ours to take, a route whose runner is gone
-  // goes without a question, and a live runner is somebody's session, so it is asked about first.
+  // is cleared, and a live runner is stopped when this run has a terminal. That used to be a question,
+  // but starting the project again from a terminal is the editor's restart button, and in a compound
+  // launch the question waited in a terminal nobody looked at, leaving that project on its old build.
+  // Without a terminal the caller is an agent or a CI job, which must not end the developer's session
+  // by accident, so it gets the facts and needs --force.
   private async settle(existing: LocalgateRoute): Promise<boolean>
   {
     if (existing.kind == "alias")
@@ -249,25 +279,13 @@ export class LocalgateRunner
       return true;
     }
 
-    if (!this.force)
+    process.stdout.write(LocalgateRunner.describeRunning(existing));
+
+    if (!this.force && process.stdin.isTTY !== true)
     {
-      process.stdout.write(LocalgateRunner.describeRunning(existing));
-
-      // Asking without a terminal would block until somebody kills this process, so a non-interactive
-      // caller gets the facts and a flag instead.
-      if (process.stdin.isTTY !== true)
-      {
-        process.stderr.write("localgate: nothing to ask on, this is not a terminal. "
-          + "Re-run with --force to take it over.\n");
-        return false;
-      }
-
-      if (!await LocalgateRunner.askTakeover())
-      {
-        process.stdout.write("localgate: left it running. Reach it at "
-          + `${LocalgateUrl.forName(existing.names[0], LocalgateProxyClient.proxyPort())}\n`);
-        return false;
-      }
+      process.stderr.write("localgate: left it running, this is not a terminal. "
+        + "Re-run with --force to take it over.\n");
+      return false;
     }
 
     await this.stopPredecessor(existing);
@@ -287,9 +305,10 @@ export class LocalgateRunner
       process.stdout.write(`localgate: ${route.names[0]} was left behind by a runner that is gone, `
         + `clearing 127.0.0.1:${route.port}\n`);
 
-      if (!await LocalgateProcessTree.killPortHolder(route.port, LocalgateRunner.takeoverTimeoutMsConst))
-        process.stderr.write(`localgate: 127.0.0.1:${route.port} is still held - `
-          + "stop that process by hand, then run again\n");
+      const outcome = await LocalgateProcessTree.killPortHolder(route.port, LocalgateRunner.takeoverTimeoutMsConst);
+      if (!outcome.released)
+        process.stderr.write(`localgate: 127.0.0.1:${route.port} is still held`
+          + `${LocalgateProcessTree.describeErrors(outcome)} - stop that process by hand, then run again\n`);
     }
 
     await LocalgateProxyClient.deregister(route.id).catch(() => {});
@@ -302,26 +321,6 @@ export class LocalgateRunner
     return fetch(`${route.controlUrl}/ping`, { signal: AbortSignal.timeout(1_000) })
       .then(response => response.ok)
       .catch(() => false);
-  }
-
-  private static async askTakeover(): Promise<boolean>
-  {
-    const reader = createInterface({ input: process.stdin, output: process.stdout });
-    reader.once("SIGINT", () =>
-    {
-      reader.close();
-      process.exit(1);
-    });
-
-    try
-    {
-      const answer = await reader.question("Stop it and take over? [Y/n] ");
-      return !/^n/i.test(answer.trim());
-    }
-    finally
-    {
-      reader.close();
-    }
   }
 
   // The old runner's own stop endpoint is the good path: it kills its child tree, releases the port and
@@ -346,11 +345,12 @@ export class LocalgateRunner
     if (pid === null)
       throw new Error(`${route.names[0]} did not stop and has no pid to kill - stop it by hand`);
 
-    await LocalgateProcessTree.killTree(pid, route.port, LocalgateRunner.takeoverTimeoutMsConst);
+    const outcome = await LocalgateProcessTree.killTree(pid, route.port, LocalgateRunner.takeoverTimeoutMsConst);
     await LocalgateProxyClient.deregister(route.id).catch(() => {});
 
-    if (await LocalgateProcessTree.isPortListening(route.port))
-      throw new Error(`${route.names[0]} still holds 127.0.0.1:${route.port} - stop it by hand`);
+    if (!outcome.released)
+      throw new Error(`${route.names[0]} still holds 127.0.0.1:${route.port}`
+        + `${LocalgateProcessTree.describeErrors(outcome)} - stop it by hand`);
   }
 
   private spawnChild(port: number): Promise<void>
@@ -407,12 +407,17 @@ export class LocalgateRunner
           return;
         }
 
-        this.exitCode = code ?? 0;
+        // A stop kills it on purpose too, and there the result of the run is the stop's, not the code a
+        // dev server leaves behind when it is killed.
+        if (!this.stopping) this.exitCode = code ?? 0;
         resolve();
       });
     });
   }
 
+  // A restart is two facts, and answering before both are in is how a route came to report "restarted"
+  // while the old process went on serving: the old tree is gone with its port free, and a replacement
+  // child is running. Either one missing is a failed restart, and the caller is told which.
   private async restartChild(): Promise<void>
   {
     const child = this.child;
@@ -425,7 +430,56 @@ export class LocalgateRunner
     });
     this.runtime = runtime;
     this.restarting = true;
-    await LocalgateProcessTree.killTree(child.pid, this.route.port);
+
+    const outcome = await LocalgateProcessTree.killTree(child.pid, this.route.port);
+    const failure = LocalgateRunner.killFailure(this.route, child.pid, outcome, "restarted");
+    if (failure !== null)
+    {
+      // Nothing died, so nothing will exit and nothing will respawn. The flag has to go back, or an exit
+      // this restart never caused would be taken for its replacement.
+      this.restarting = false;
+      throw new Error(failure);
+    }
+
+    if (!await this.waitForReplacement(child, LocalgateRunner.replacementTimeoutMsConst))
+      throw new Error(`${this.route.names[0]} released 127.0.0.1:${this.route.port} but started no `
+        + `replacement process within ${LocalgateRunner.replacementTimeoutMsConst / 1_000}s`);
+  }
+
+  // A stop is a request that can be refused, and that is the whole difference from the signal path: the
+  // kill runs first and what it achieved is the answer. Answering before it left a stop the system had
+  // turned down looking exactly like one that worked - the route gone, this runner gone, the old dev
+  // server still on its port, and `localgate stop` printing "stopped".
+  private async stopChild(): Promise<void>
+  {
+    const child = this.child;
+    if (!child?.pid || !this.route) return;
+
+    this.stopping = true;
+    const outcome = await LocalgateProcessTree.killTree(child.pid, this.route.port);
+    const failure = LocalgateRunner.killFailure(this.route, child.pid, outcome, "stopped");
+    if (failure === null) return;
+
+    // Nothing died, so this runner stays with what it could not kill: its route still points at the
+    // process that is serving, and that process still has an owner the next stop can ask. Exiting here
+    // would leave it holding the port with no route and nobody to end it but the operator, by hand.
+    this.stopping = false;
+    throw new Error(failure);
+  }
+
+  // The replacement is spawned by the old child's own exit handler, so the kill returning is not yet a
+  // restart. The flag is left alone here: a child still on its way out respawns after this gave up, and
+  // reporting a restart that did not finish in time is better than ending the runner on its next exit.
+  private async waitForReplacement(previous: ChildProcess, timeoutMs: number): Promise<boolean>
+  {
+    const deadline = Date.now() + timeoutMs;
+    for (;;)
+    {
+      const current = this.child;
+      if (current !== null && current !== previous) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise(resolve => setTimeout(resolve, LocalgateRunner.replacementPollMsConst));
+    }
   }
 
   private absorb(chunk: Buffer, sink: NodeJS.WriteStream): void
@@ -441,60 +495,17 @@ export class LocalgateRunner
 
   private startControlServer(): Promise<string>
   {
-    const server = createServer((request, response) =>
-    {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      const send = (status: number, payload: unknown) =>
-      {
-        const body = JSON.stringify(payload);
-        response.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
-        response.end(body);
-      };
-
-      if (url.pathname == "/ping") return send(200, { ok: true, id: this.route?.id ?? null });
-
-      if (url.pathname == "/logs")
-      {
-        const lines = Number.parseInt(url.searchParams.get("lines") ?? "80", 10);
-        return send(200, { lines: this.logs.slice(-Math.max(1, lines)) });
-      }
-
-      if (url.pathname == "/restart" && request.method == "POST")
-      {
-        void this.restartChild().then(
-          () => send(200, { ok: true }),
-          (error: unknown) => send(409, { error: String(error) })
-        );
-        return;
-      }
-
-      if (url.pathname == "/stop" && request.method == "POST")
-      {
-        send(200, { ok: true });
-        void this.shutdown(0);
-        return;
-      }
-
-      return send(404, { error: `unknown ${request.method} ${url.pathname}` });
+    const control = new LocalgateRunnerControl({
+      routeId: () => this.route?.id ?? null,
+      logs: lines => this.logs.slice(-lines),
+      restart: () => this.restartChild(),
+      stop: () => this.stopChild(),
+      // The child is gone and its port is free, so what is left of the stop is this runner's own exit.
+      stopped: () => void this.end(0)
     });
 
-    this.controlServer = server;
-
-    // Loopback only: the restart channel must not be reachable from the LAN.
-    return new Promise<string>((resolve, reject) =>
-    {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () =>
-      {
-        const address = server.address();
-        if (!address || typeof address == "string")
-        {
-          reject(new Error("control server has no port"));
-          return;
-        }
-        resolve(`http://127.0.0.1:${address.port}`);
-      });
-    });
+    this.control = control;
+    return control.start();
   }
 
   // The proxy holds the route table in memory, so if it dies the route dies with it. Another runner may
@@ -562,15 +573,30 @@ export class LocalgateRunner
       process.on(signal, () => void this.shutdown(0));
   }
 
+  // Ctrl+C and the terminal going away, which is the operator leaving: the runner ends whatever the kill
+  // achieved, and a port that outlived the child is a line on the way out. `/stop` is the other way in,
+  // and it is the opposite - there somebody is waiting for the answer, so a refused kill is refused.
   private async shutdown(code: number): Promise<void>
   {
     if (this.stopping) return;
     this.stopping = true;
-    this.exitCode = code;
 
     const child = this.child;
-    if (child?.pid && this.route) await LocalgateProcessTree.killTree(child.pid, this.route.port);
+    if (child?.pid && this.route)
+    {
+      const outcome = await LocalgateProcessTree.killTree(child.pid, this.route.port);
+      if (!outcome.released)
+        process.stderr.write(`localgate: 127.0.0.1:${this.route.port} is still held after stopping `
+          + `${child.pid}${LocalgateProcessTree.describeErrors(outcome)}\n`);
+    }
 
+    await this.end(code);
+  }
+
+  // Everything left once the child is dealt with: the route, the control server and this process.
+  private async end(code: number): Promise<void>
+  {
+    this.exitCode = code;
     await this.cleanup();
     process.exit(code);
   }
@@ -584,11 +610,10 @@ export class LocalgateRunner
       this.runtime = null;
     }
 
-    if (this.controlServer)
+    if (this.control)
     {
-      this.controlServer.closeAllConnections();
-      await new Promise<void>(resolve => this.controlServer!.close(() => resolve()));
-      this.controlServer = null;
+      await this.control.close();
+      this.control = null;
     }
   }
 

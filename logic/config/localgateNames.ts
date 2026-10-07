@@ -3,6 +3,11 @@ import type { LocalgateMode } from "./localgateProjectConfig.ts";
 
 export class LocalgateNames
 {
+  // The start page answers on this label instead of a route, on `.localhost` and on the machine's own
+  // domain. It is resolved before the route table, so a project or alias holding the same name would be
+  // registered, listed and never reached - refused at registration instead.
+  static readonly startNameConst = "start";
+
   private static readonly dnsLabelMaxLengthConst = 63;
 
   static local(projectName: string): string
@@ -30,6 +35,13 @@ export class LocalgateNames
   static shortName(hostname: string): string
   {
     return hostname.split(".")[0];
+  }
+
+  // Takes the short name as well as any hostname built from it, because the name arrives as both: a
+  // project name from package.json, an alias argument, and a full hostname from `localgate list`.
+  static isReserved(name: string): boolean
+  {
+    return LocalgateNames.shortName(name) == LocalgateNames.startNameConst;
   }
 
   static routeNames(projectName: string, mode: LocalgateMode, machine: LocalgateMachineSettings | null): string[]

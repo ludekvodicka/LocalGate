@@ -15,14 +15,14 @@ export class LocalgateBanner
 
   static render(route: LocalgateRoute, proxyPort: number): string
   {
-    const [local, network, internet] = route.names;
     const [nextLabel, nextCommand] = LocalgateBanner.next(route);
 
     const lines = ["", `  localgate   ${LocalgateBanner.appName(route)}   ·   ${LocalgateBanner.subtitle(route)}`, ""];
 
-    if (internet) lines.push(LocalgateBanner.row("internet", `https://${internet}`));
-    if (network) lines.push(LocalgateBanner.row("network", LocalgateUrl.forName(network, proxyPort)));
-    lines.push(LocalgateBanner.row("local", LocalgateUrl.forName(local, proxyPort)));
+    // Widest reach first, because the address a person came here for is the one that leaves the machine.
+    for (const address of LocalgateUrl.routeAddresses(route, proxyPort).reverse())
+      lines.push(LocalgateBanner.row(address.label, address.url));
+
     lines.push("", LocalgateBanner.row("upstream", `127.0.0.1:${route.port}`), LocalgateBanner.row(nextLabel, nextCommand), "");
 
     return `${lines.join("\n")}\n`;

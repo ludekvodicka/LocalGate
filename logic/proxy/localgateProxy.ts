@@ -4,6 +4,7 @@ import { LocalgateControlApi } from "./localgateControlApi.ts";
 import { LocalgateHeaderRewrite } from "./localgateHeaderRewrite.ts";
 import { LocalgateHealth } from "./localgateHealth.ts";
 import type { LocalgateReach, LocalgateRegistry, LocalgateRoute } from "./localgateRegistry.ts";
+import { LocalgateStartPage } from "./localgateStartPage.ts";
 
 export type LocalgateProxyOptions =
 {
@@ -27,6 +28,7 @@ export class LocalgateProxy
     private readonly registry: LocalgateRegistry,
     private readonly health: LocalgateHealth,
     private readonly controlApi: LocalgateControlApi,
+    private readonly startPage: LocalgateStartPage,
     private readonly options: LocalgateProxyOptions
   ) {}
 
@@ -115,6 +117,11 @@ export class LocalgateProxy
     if (loopback && LocalgateControlApi.handles(requestUrl))
       return this.controlApi.handle(request, response);
 
+    // Before the table, not after it: the start page has no route, and a route that took its name would
+    // shadow the page rather than the other way round. The registry refuses that name for this reason.
+    if (this.startPage.handles(request.headers.host ?? "", reachedFrom))
+      return this.startPage.handle(request, response, reachedFrom);
+
     const route = this.registry.byHostname(request.headers.host ?? "", reachedFrom);
     if (!route)
     {
@@ -165,8 +172,20 @@ export class LocalgateProxy
       upstreamResponse.pipe(response);
     });
 
+    // pipe() only unpipes when the browser goes away, it never ends the source. Without this an SSE
+    // stream or a long poll stays open on the dev server after a refresh, and the handler there never
+    // sees its request aborted. The same close covers a browser that leaves mid-upload or mid-wait.
+    response.once("close", () =>
+    {
+      if (!response.writableFinished) upstream.destroy();
+    });
+
     upstream.once("error", (error: NodeJS.ErrnoException) =>
     {
+      // The browser left and the close above tore the request down. That reset says nothing about the
+      // dev server, so it must not move the route to starting or dead.
+      if (response.destroyed) return;
+
       if (response.headersSent)
       {
         response.destroy();
@@ -237,6 +256,9 @@ export class LocalgateProxy
     });
 
     upstream.once("error", () => clientSocket.destroy());
+    // A browser that leaves before the dev server answers the handshake would otherwise leave the
+    // upgrade request, and the socket it later yields, open on the dev server with nobody to pipe to.
+    clientSocket.once("close", () => upstream.destroy());
     upstream.end();
   }
 
@@ -267,7 +289,9 @@ export class LocalgateProxy
         lines.push(`  ${route.names.join("  ")}  ->  127.0.0.1:${route.port}  [${route.state}]`);
     }
 
-    lines.push("");
+    // The port this request arrived on, not the configured one: the two differ when the proxy was asked
+    // for an ephemeral port, and a hint pointing at a port nothing listens on is worse than no hint.
+    lines.push("", `Every route, with its addresses: ${LocalgateStartPage.localUrl(this.boundPorts()[0]!)}`, "");
     return lines.join("\n");
   }
 

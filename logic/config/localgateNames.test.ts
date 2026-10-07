@@ -42,4 +42,15 @@ describe("LocalgateNames", () =>
     expect(() => LocalgateNames.publicName("x".repeat(60), machine("pub")))
       .toThrow(/longer than 63 characters/);
   });
+
+  // The name arrives as a project name, as an alias argument and as a full hostname, and a check that
+  // only knew one of those shapes would let the start page be taken by the other two.
+  it("knows the start page's name in every shape it arrives in", () =>
+  {
+    expect(LocalgateNames.isReserved("start")).toBe(true);
+    expect(LocalgateNames.isReserved("start.localhost")).toBe(true);
+    expect(LocalgateNames.isReserved("start.dev.example.com")).toBe(true);
+    expect(LocalgateNames.isReserved("starter")).toBe(false);
+    expect(LocalgateNames.isReserved("myapp.localhost")).toBe(false);
+  });
 });

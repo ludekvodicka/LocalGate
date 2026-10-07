@@ -32,6 +32,13 @@ export class LocalgateHealth
     return LocalgateHealth.requestTimeoutMsConst;
   }
 
+  // How long a refused connection still reads as "not bound yet" rather than "gone". Shared with the
+  // start page, which has to draw the same line when its own probe finds nothing on the port.
+  static startupGraceMs(): number
+  {
+    return LocalgateHealth.startupGraceMsConst;
+  }
+
   noteSuccess(route: LocalgateRoute): void
   {
     this.failures.delete(route.id);

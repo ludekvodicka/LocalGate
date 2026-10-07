@@ -134,8 +134,14 @@ export class LocalgateProxyClient
       throw new LocalgateRouteConflictError(payload.existing);
     }
 
+    // The proxy refuses a registration with a sentence saying why - a reserved name, a port outside the
+    // dialable range - and a bare status code throws that sentence away in the one place a person reads
+    // it, which is the terminal the run was started from.
     if (!response.ok)
-      throw new Error(`localgate proxy answered ${response.status} for ${method} ${path}`);
+    {
+      const reason = await response.json().then(payload => (payload as { error?: string }).error).catch(() => undefined);
+      throw new Error(reason ?? `localgate proxy answered ${response.status} for ${method} ${path}`);
+    }
 
     return response.json();
   }

@@ -21,13 +21,21 @@ persisted except alias intent".
 ## What is stored
 
 ```json
-{ "aliases": [ { "name": "myapp", "port": 8001 } ] }
+{ "aliases": [ { "name": "myapp", "port": 8001, "stop": "docker stop myapp" } ] }
 ```
 
-The short name and the port, nothing else. The full name list and the mode are re-derived at restore
+The short name, the port, and optionally the command that stops whatever answers there. The full name
+list and the mode are re-derived at restore
 time by `LocalgateAliasRoute.registration` from the current `~/.localgate/config.json`, so changing the
 machine label or base domain moves the alias with it instead of resurrecting hostnames that no longer
 resolve. An alias is always registered in `local` or `lan` mode, so `publicPrefix` never applies to it.
+
+`stop` is optional and absent from the file when there is none. It exists because an alias points at a
+process localgate never started, so nothing can be asked to end it: this line is the machine owner's own
+answer, written where only they can write it. It is what gives an alias a stop button on the start page,
+and it is deliberately not part of a registration - a command that could arrive over the control API
+would be a command a web page could plant. `localgate alias <name> <port> --stop "<command>"` writes it,
+and re-running the command without `--stop` moves the port while keeping the line.
 
 Re-deriving the mode has a consequence worth knowing: an alias created on a machine with no
 `~/.localgate/config.json` is local-only, and the day that file appears the same entry comes back as a

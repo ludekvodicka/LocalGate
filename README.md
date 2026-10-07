@@ -49,7 +49,7 @@ request. Localgate only needs the public prefix to register the exact public nam
 The table lives in the proxy's memory. There is no config file listing apps, no port assignment to keep
 in sync, and nothing to clean up after a crash.
 
-## How restart works
+## How restart and stop work
 
 The runner sits in your editor's debug terminal and owns the dev server as its child. That is what lets
 a restart keep the terminal and debugger while swapping the process underneath. The restart also
@@ -69,6 +69,18 @@ sequenceDiagram
     Runner->>Dev: spawn on the same port
     Note over Cli,Dev: same route, same port, the browser keeps its URL
 ```
+
+A restart reports success only once the runner has seen both halves of it: the old tree gone with its
+port free, and a replacement child running. If the kill is refused or the port stays bound, the runner
+answers `409` with what the kill said, `localgate restart` prints that and exits non-zero, and the old
+process is left named rather than reported as replaced. See
+[docs/architecture/restart-verification.md](docs/architecture/restart-verification.md).
+
+`localgate stop` is decided the same way, on the same fact: the runner kills the tree first and answers
+with what that achieved, so a stop the system refused prints the reason and exits non-zero instead of
+`stopped`. A refused stop keeps its route and its runner, because the process behind that route is still
+the one serving it. Ctrl+C is the other way round and ends the runner whatever the kill said. See
+[docs/architecture/stop-verification.md](docs/architecture/stop-verification.md).
 
 While the dev server is down the proxy answers with a readable page instead of a connection error.
 Websocket upgrades are proxied, and on Next.js dev endpoints (`/_next/*`, `/__nextjs*`) the `Origin`
@@ -119,7 +131,9 @@ The debugger attaches to the child as usual, and the terminal stays where it is 
 Press the editor's restart button and you start a *second* `localgate run` for the same project, which
 used to fail twice over: the name moved to the new runner and left the old one unreachable, and the
 dev server then refused the port because of its own lock. So the collision is settled before anything
-is claimed - the new run finds its predecessor and asks, in the debug terminal it was started from:
+is claimed - the new run finds its predecessor, prints what it is about to stop in the debug terminal
+it was started from, and takes over without asking. A compound launch of several projects therefore
+restarts all of them, with no terminal left waiting for an answer:
 
 ```
   localgate   myapp.localhost is already running
@@ -130,39 +144,79 @@ is claimed - the new run finds its predecessor and asks, in the debug terminal i
     pids       runner 45568, child 4544
     debugger   attached
 
-Stop it and take over? [Y/n]
+localgate: stopping myapp.localhost (runner 45568)
 ```
 
-Yes stops the old one the good way: its own runner kills the child tree, releases the port and
+The old one is stopped the good way: its own runner kills the child tree, releases the port and
 deregisters itself, so its terminal ends cleanly and the new run takes the name. Killing by pid is
 only the fallback for a runner that no longer answers.
 
-A route whose runner is already gone is not a question. Its dev server usually outlived it and still
-holds the port - that is the orphan a framework lock trips over - so it is cleared and the name reused
-without asking.
+A route whose runner is already gone is cleared too. Its dev server usually outlived it and still
+holds the port - that is the orphan a framework lock trips over - so it is killed and the name reused.
 
-The same question is asked again if the name is taken between finding it free and claiming it. The
-route table lives in the proxy, so a proxy that has just started has an empty one, and the runners that
-were already running refill it from their heartbeats a few seconds later - a window in which the check
-sees a free name that is not free.
+The same takeover happens if the name is taken between finding it free and claiming it. The route
+table lives in the proxy, so a proxy that has just started has an empty one, and the runners that were
+already running refill it from their heartbeats a few seconds later - a window in which the check sees
+a free name that is not free.
+
+An alias is never taken over: `run` refuses the name and exits 1.
+
+## The start page
+
+`http://start.localhost` is every route in a browser. One card per app: click it anywhere and it opens.
+It needs no setup - the proxy serves the page from itself, and the name is reserved, so no project or
+alias can take it.
+
+![the localgate start page: a card per route with its name, state, addresses and upstream port](docs/media/localgate-start-page.png)
+
+The card opens the address that works from where you opened the page, and the route's other addresses -
+the shared name, the public one - are chips next to it. The line at the bottom is the upstream port, the
+command and the directory. The page refreshes itself every few seconds, so a dev server that has just
+started appears without a reload, and a state changes while you watch.
+
+The badge is measured, not remembered: the page opens a connection to each route's port as it renders,
+so a route nobody has visited says **running** rather than sitting at "starting", and a route with
+nothing behind it says **not running** and dims. A wedged app - one that accepts connections but answers
+nothing - still reads **not responding**, because only forwarded traffic can tell you that.
+
+A `stop` chip ends a dev server: the first click turns that card into a question, the second asks the
+runner to kill the child tree and exit, exactly as `localgate stop` does. It is on the loopback page
+only, and it takes a same-origin POST, so no other site the browser has open can reach it.
+
+An alias has no runner, so it gets that button only once you say how to stop what it points at:
+
+```bash
+localgate alias wagtail 8003 --stop "docker stop wagtail"
+```
+
+The command lives in `~/.localgate/aliases.json`, which is machine-local and never committed, and the
+question names it before it runs. Without one, an alias card has no stop button - localgate will not
+guess how to end a process it did not start.
+
+With a machine config it also answers on `start.<label>.<your-domain>`, which is the address to send a
+colleague - and that answer is narrower than the local one. A route in mode `local` is absent from it,
+its name included, and the routes that remain show only the addresses that work off this machine,
+without the upstream port, the command or the directory. Details in
+[docs/architecture/start-page.md](docs/architecture/start-page.md).
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `localgate run [--force] <cmd...>` | Run a dev server behind its name. `--force` takes over a running one without asking. |
+| `localgate run [--force] <cmd...>` | Run a dev server behind its name. One already running for the project is stopped first; without a terminal, only with `--force`. |
 | `localgate list [--json]` | Show active routes. |
 | `localgate status [app] [--json]` | State of one route, with a tail of its output in `--json`. |
 | `localgate restart [app]` | Restart a route's dev server. |
 | `localgate stop [app]` | Stop a route's dev server. |
 | `localgate logs [app] [--lines N]` | Tail a route's captured output. |
-| `localgate alias <name> <port>` | Register a static route, e.g. a docker service. Remembered across proxy restarts. |
+| `localgate alias <name> <port> [--stop "<cmd>"]` | Register a static route, e.g. a docker service. Remembered across proxy restarts. `--stop` records what ends it, which gives it a stop button on the start page. |
 | `localgate alias --remove <name>` | Drop a static route and forget it. |
 | `localgate config [dir] [--json]` | Machine and project config, the names it implies, and the alias file. |
 | `localgate cloudflare-info` | Print the DNS and ingress entries to paste. |
 | `localgate prune` | Drop routes whose runner is gone. |
 
-With no `[app]` argument, a command acts on the route owning the current directory.
+With no `[app]` argument, a command acts on the route owning the current directory. `start` is not a
+name a project or an alias can use: it belongs to the start page above.
 
 ## Working with a coding agent
 
@@ -178,9 +232,10 @@ localgate list --json       # everything running on the machine
 `status --json` includes the last lines the dev server printed, so an agent can check whether its
 change compiled without owning the terminal it compiled in.
 
-The takeover question above is the one place this matters for safety. **With no terminal to ask in -
-an agent, a CI job - `localgate run` prints what is already running and exits 1 instead of asking.**
-It never kills the developer's session by accident; `localgate run --force` takes over deliberately.
+The takeover above is the one place this matters for safety. **With no terminal - an agent, a CI job -
+`localgate run` prints what is already running and exits 1 instead of taking it over.** It never ends
+the developer's session by accident; `localgate run --force` takes over deliberately. To pick up a
+change, use `localgate restart`, which keeps the runner, the terminal and the debugger.
 
 ## Names, and who can reach them
 
@@ -284,6 +339,10 @@ The mode is enforced by the listener, not just by which names exist. A `.localho
 machine that resolved it", so the LAN listener never answers one, whatever `Host` header a request
 carries and whether it is a plain request or a websocket upgrade. An app in the default `local` mode
 has no other name, which is what keeps it on this machine.
+
+The start page follows the same rule rather than working around it: on the LAN it lists only what that
+listener would serve. An app in mode `local` does not appear on it at all - not its name, its port, its
+command or its directory.
 
 Those dev servers are the real exposure: in `lan` mode anyone on the network reaches them with no
 authentication, and in `internet` mode anyone holding the URL does. Use `lan` on networks you trust, and

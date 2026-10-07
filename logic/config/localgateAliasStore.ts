@@ -7,13 +7,22 @@ export type LocalgatePersistedAlias =
 {
   name: string;
   port: number;
+  // What ends whatever answers on that port, when the machine knows. An alias names a process localgate
+  // did not start - a container, a service - so there is nobody to ask; this line is the answer the
+  // machine's owner wrote down, and it is what lets an alias have a stop button at all.
+  stop: string | null;
 };
 
-// Records alias INTENT - the short name and the port, nothing else. An alias is the one route with no
-// process behind it, so a runner heartbeat cannot bring it back after a proxy restart and a file is its
-// only possible owner of record. Names and mode are deliberately not stored: re-deriving them at restore
-// time is what keeps a changed machine label or domain from resurrecting hostnames nobody uses any more.
-// The CLI alias command is the only writer; the proxy reads this once at boot and never writes it.
+// Records alias INTENT - the short name, the port, and optionally the command that stops what listens
+// there. An alias is the one route with no process behind it, so a runner heartbeat cannot bring it back
+// after a proxy restart and a file is its only possible owner of record. Names and mode are deliberately
+// not stored: re-deriving them at restore time is what keeps a changed machine label or domain from
+// resurrecting hostnames nobody uses any more.
+//
+// The CLI alias command is the only writer. The proxy reads it at boot to restore the routes, and the
+// start page reads the stop commands as it renders, so an alias that gains one needs no proxy restart.
+// A stop command is trusted because this file is the only way in: it never crosses the control API,
+// where a form POST from a browser could plant one.
 export class LocalgateAliasStore
 {
   private static readonly maxPortConst = 65_535;
@@ -36,6 +45,22 @@ export class LocalgateAliasStore
   // server on the machine depends on, so a bad entry is dropped and the rest still load.
   static load(filePath: string = LocalgateAliasStore.filePath()): LocalgatePersistedAlias[]
   {
+    return LocalgateAliasStore.read(filePath, true);
+  }
+
+  // The stop commands alone, by alias name, and without a word to stderr: the page asks for these on
+  // every render, and a file the boot already complained about must not complain again every five
+  // seconds.
+  static stopCommands(filePath: string = LocalgateAliasStore.filePath()): Map<string, string>
+  {
+    const commands = new Map<string, string>();
+    for (const alias of LocalgateAliasStore.read(filePath, false))
+      if (alias.stop) commands.set(alias.name, alias.stop);
+    return commands;
+  }
+
+  private static read(filePath: string, report: boolean): LocalgatePersistedAlias[]
+  {
     let raw: string;
     try
     {
@@ -45,7 +70,7 @@ export class LocalgateAliasStore
     {
       // A machine that never registered an alias is the ordinary case and says nothing. Anything else -
       // no permission, a directory in the way - is worth a line, because it loses aliases that exist.
-      if ((error as NodeJS.ErrnoException).code != "ENOENT")
+      if (report && (error as NodeJS.ErrnoException).code != "ENOENT")
         process.stderr.write(`localgate: ${filePath} could not be read, continuing without its aliases: ${String(error)}\n`);
       return [];
     }
@@ -59,21 +84,21 @@ export class LocalgateAliasStore
     {
       // Left on disk on purpose: the next add or remove rewrites it, and until then the person can
       // still see what they typed.
-      process.stderr.write(`localgate: ${filePath} is not valid JSON, ignoring the aliases in it\n`);
+      if (report) process.stderr.write(`localgate: ${filePath} is not valid JSON, ignoring the aliases in it\n`);
       return [];
     }
 
     const entries = (parsed as { aliases?: unknown } | null)?.aliases;
     if (!Array.isArray(entries))
     {
-      process.stderr.write(`localgate: ${filePath} has no alias list, ignoring it\n`);
+      if (report) process.stderr.write(`localgate: ${filePath} has no alias list, ignoring it\n`);
       return [];
     }
 
     const aliases: LocalgatePersistedAlias[] = [];
     for (const entry of entries)
     {
-      const alias = LocalgateAliasStore.validated(entry, filePath);
+      const alias = LocalgateAliasStore.validated(entry, filePath, report);
       if (alias) aliases.push(alias);
     }
 
@@ -84,9 +109,14 @@ export class LocalgateAliasStore
   // port the same way the registry replaces the live route.
   static add(alias: LocalgatePersistedAlias, filePath: string = LocalgateAliasStore.filePath()): void
   {
-    const aliases = LocalgateAliasStore.load(filePath).filter(existing => existing.name != alias.name);
-    aliases.push(alias);
-    LocalgateAliasStore.write(aliases, filePath);
+    const aliases = LocalgateAliasStore.load(filePath);
+    const previous = aliases.find(existing => existing.name == alias.name);
+
+    // Re-running `localgate alias myapp 8002` moves the port, and it must not silently drop a stop
+    // command written for that name. Passing one replaces it.
+    const kept = aliases.filter(existing => existing.name != alias.name);
+    kept.push({ ...alias, stop: alias.stop ?? previous?.stop ?? null });
+    LocalgateAliasStore.write(kept, filePath);
   }
 
   static remove(name: string, filePath: string = LocalgateAliasStore.filePath()): boolean
@@ -113,7 +143,9 @@ export class LocalgateAliasStore
     const handle = openSync(temporary, "w", LocalgateAliasStore.fileModeConst);
     try
     {
-      writeSync(handle, `${JSON.stringify({ aliases }, null, 2)}\n`);
+      // An absent command is absent from the file rather than written as a null: people edit this file.
+      const written = aliases.map(alias => alias.stop ? alias : { name: alias.name, port: alias.port });
+      writeSync(handle, `${JSON.stringify({ aliases: written }, null, 2)}\n`);
       fsyncSync(handle);
     }
     finally
@@ -124,24 +156,32 @@ export class LocalgateAliasStore
     renameSync(temporary, filePath);
   }
 
-  private static validated(entry: unknown, filePath: string): LocalgatePersistedAlias | null
+  private static validated(entry: unknown, filePath: string, report: boolean): LocalgatePersistedAlias | null
   {
-    const candidate = entry as { name?: unknown; port?: unknown } | null;
+    const candidate = entry as { name?: unknown; port?: unknown; stop?: unknown } | null;
     const name = candidate?.name;
     const port = candidate?.port;
 
     if (typeof name != "string" || !LocalgateMachineConfig.isLabel(name))
     {
-      process.stderr.write(`localgate: ${filePath} holds an alias whose name is not a DNS label, skipping it\n`);
+      if (report) process.stderr.write(`localgate: ${filePath} holds an alias whose name is not a DNS label, skipping it\n`);
       return null;
     }
 
     if (typeof port != "number" || !LocalgateAliasStore.isPort(port))
     {
-      process.stderr.write(`localgate: ${filePath} holds alias ${name} without a usable port, skipping it\n`);
+      if (report) process.stderr.write(`localgate: ${filePath} holds alias ${name} without a usable port, skipping it\n`);
       return null;
     }
 
-    return { name, port };
+    // A malformed stop command costs the button, not the alias: the name and the port are what make the
+    // route, and dropping those over a mistyped extra field would take a service off the machine.
+    const stop = typeof candidate?.stop == "string" && candidate.stop.trim().length > 0 ? candidate.stop : null;
+    // A written `null` says "none", which is exactly what this returns, so only a value that tried to be
+    // a command and failed is worth a word.
+    if (candidate?.stop != null && !stop && report)
+      process.stderr.write(`localgate: ${filePath} holds alias ${name} with an unusable "stop" command, ignoring that field\n`);
+
+    return { name, port, stop };
   }
 }

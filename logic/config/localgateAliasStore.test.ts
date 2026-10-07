@@ -23,26 +23,82 @@ describe("LocalgateAliasStore", () =>
   it("round-trips an alias and creates the directory on the first write", () =>
   {
     const path = join(scratchDirectory(), "deep", "aliases.json");
-    LocalgateAliasStore.add({ name: "myapp", port: 8_001 }, path);
+    LocalgateAliasStore.add({ name: "myapp", port: 8_001, stop: null }, path);
 
-    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "myapp", port: 8_001 }]);
+    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "myapp", port: 8_001, stop: null }]);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ aliases: [{ name: "myapp", port: 8_001 }] });
+  });
+
+  // An alias points at a process localgate never started, so the only way it can be stopped at all is a
+  // line its owner wrote down here.
+  it("carries the stop command, and hands it out by name without a word to stderr", () =>
+  {
+    const path = withContents({ aliases: [
+      { name: "cms", port: 8_002, stop: "docker stop cms" },
+      { name: "cache", port: 8_003 }
+    ] });
+    const written = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    try
+    {
+      expect(LocalgateAliasStore.load(path)).toEqual([
+        { name: "cms", port: 8_002, stop: "docker stop cms" },
+        { name: "cache", port: 8_003, stop: null }
+      ]);
+      expect([...LocalgateAliasStore.stopCommands(path)]).toEqual([["cms", "docker stop cms"]]);
+      expect(written).not.toHaveBeenCalled();
+    }
+    finally
+    {
+      written.mockRestore();
+    }
+  });
+
+  // Moving an alias to another port is an ordinary thing to do, and it must not quietly cost the owner
+  // the command they wrote - a stop button that disappears without a word is worse than none.
+  it("keeps an existing stop command when the alias is re-added without one", () =>
+  {
+    const path = withContents({ aliases: [{ name: "cms", port: 8_002, stop: "docker stop cms" }] });
+
+    LocalgateAliasStore.add({ name: "cms", port: 8_004, stop: null }, path);
+    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_004, stop: "docker stop cms" }]);
+
+    LocalgateAliasStore.add({ name: "cms", port: 8_004, stop: "docker compose stop cms" }, path);
+    expect(LocalgateAliasStore.stopCommands(path).get("cms")).toBe("docker compose stop cms");
+  });
+
+  // The name and the port are what make the route, so a mistyped extra field must not take the service
+  // off the machine with it.
+  it("keeps an alias whose stop command is unusable, and says so", () =>
+  {
+    const path = withContents({ aliases: [{ name: "cms", port: 8_002, stop: 42 }] });
+    const written = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    try
+    {
+      expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002, stop: null }]);
+      expect(String(written.mock.calls[0]![0])).toContain("unusable");
+    }
+    finally
+    {
+      written.mockRestore();
+    }
   });
 
   it("replaces the port when the same name is added again", () =>
   {
     const path = join(scratchDirectory(), "aliases.json");
-    LocalgateAliasStore.add({ name: "myapp", port: 8_001 }, path);
-    LocalgateAliasStore.add({ name: "cms", port: 8_002 }, path);
-    LocalgateAliasStore.add({ name: "myapp", port: 8_003 }, path);
+    LocalgateAliasStore.add({ name: "myapp", port: 8_001, stop: null }, path);
+    LocalgateAliasStore.add({ name: "cms", port: 8_002, stop: null }, path);
+    LocalgateAliasStore.add({ name: "myapp", port: 8_003, stop: null }, path);
 
-    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002 }, { name: "myapp", port: 8_003 }]);
+    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002, stop: null }, { name: "myapp", port: 8_003, stop: null }]);
   });
 
   it("reports whether a removal dropped anything", () =>
   {
     const path = join(scratchDirectory(), "aliases.json");
-    LocalgateAliasStore.add({ name: "myapp", port: 8_001 }, path);
+    LocalgateAliasStore.add({ name: "myapp", port: 8_001, stop: null }, path);
 
     expect(LocalgateAliasStore.remove("cms", path)).toBe(false);
     expect(LocalgateAliasStore.remove("myapp", path)).toBe(true);
@@ -65,21 +121,21 @@ describe("LocalgateAliasStore", () =>
   it("skips an entry whose name is not a DNS label or whose port is not a port", () =>
   {
     const path = withContents({ aliases: [
-      { name: "Bad Name", port: 8_001 },
-      { name: "myapp", port: 70_000 },
+      { name: "Bad Name", port: 8_001, stop: null },
+      { name: "myapp", port: 70_000, stop: null },
       { name: "myapp", port: "8001" },
-      { name: "cms", port: 8_002 }
+      { name: "cms", port: 8_002, stop: null }
     ] });
 
-    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002 }]);
+    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002, stop: null }]);
   });
 
   it("keeps the valid entries when a broken one is rewritten", () =>
   {
     const path = withContents({ aliases: [{ name: "Bad Name", port: 8_001 }, { name: "cms", port: 8_002 }] });
-    LocalgateAliasStore.add({ name: "myapp", port: 8_003 }, path);
+    LocalgateAliasStore.add({ name: "myapp", port: 8_003, stop: null }, path);
 
-    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002 }, { name: "myapp", port: 8_003 }]);
+    expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002, stop: null }, { name: "myapp", port: 8_003, stop: null }]);
   });
 
   // The warning is the only trace a dropped alias leaves, and the store is the only place that can say it.
@@ -90,7 +146,7 @@ describe("LocalgateAliasStore", () =>
 
     try
     {
-      expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002 }]);
+      expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002, stop: null }]);
       expect(written).toHaveBeenCalledTimes(1);
       expect(String(written.mock.calls[0][0])).toContain("not a DNS label");
     }

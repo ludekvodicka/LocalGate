@@ -1,5 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { LocalgateNames } from "../config/localgateNames.ts";
 import type { LocalgateMode } from "../config/localgateProjectConfig.ts";
+import { LocalgateUrl } from "./localgateUrl.ts";
 
 export type LocalgateRouteKind = "app" | "alias";
 
@@ -70,6 +72,8 @@ export class LocalgateRegistry
     if (registration.names.length == 0)
       throw new Error("a route needs at least one name");
 
+    LocalgateRegistry.refuseReserved(registration.names);
+
     // Taking a name away from a live runner used to be silent, which left that runner holding its port
     // with no route pointing at it - unreachable, and invisible to stop/restart/status. A runner may
     // still re-register its own names, which is how the heartbeat recovers from a proxy restart.
@@ -119,7 +123,7 @@ export class LocalgateRegistry
   // `.localhost` name ends up answered on the LAN.
   byHostname(hostHeader: string, reachedFrom: LocalgateReach): LocalgateRoute | null
   {
-    const host = LocalgateRegistry.hostnameOf(hostHeader);
+    const host = LocalgateUrl.hostnameOf(hostHeader);
     if (!host) return null;
 
     for (const route of this.routes.values())
@@ -175,6 +179,7 @@ export class LocalgateRegistry
     if (patch.names)
     {
       if (patch.names.length == 0) throw new Error("a route needs at least one name");
+      LocalgateRegistry.refuseReserved(patch.names);
       for (const name of patch.names)
       {
         const existing = this.findByName(name);
@@ -186,17 +191,22 @@ export class LocalgateRegistry
     return route;
   }
 
+  // The proxy resolves the start page before it looks in this table, so a route under that name would be
+  // registered, listed and never reached. Refused here rather than only in the commands, because the
+  // table is what every path ends at - the alias command, a runner claiming a name, a rename on restart.
+  private static refuseReserved(names: string[]): void
+  {
+    for (const name of names)
+      if (LocalgateNames.isReserved(name))
+        throw new Error(`"${LocalgateNames.startNameConst}" is reserved for localgate's start page, `
+          + `so ${name} cannot be registered`);
+  }
+
   private findByName(name: string): LocalgateRoute | null
   {
     for (const route of this.routes.values())
       if (route.names.includes(name)) return route;
     return null;
-  }
-
-  private static hostnameOf(hostHeader: string): string | null
-  {
-    const host = hostHeader.trim().toLowerCase().split(":")[0];
-    return host ? host : null;
   }
 
   // `.localhost` resolves to the loopback address of whoever looked it up, so off this machine it

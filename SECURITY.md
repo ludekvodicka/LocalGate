@@ -24,6 +24,10 @@ Especially interested in:
   table it was registered in.
 - Header or environment rewriting that leaks a value into a request it should not be in.
 - A path where localgate exposes an app on the LAN that its `mode` did not ask for.
+- The start page (`start.localhost`, and `start.<label>.<your-domain>` on the LAN listener) naming a
+  route, a port, a command or a directory that the listener it answered on should not reveal.
+- Its `stop` button ending a dev server from off the loopback listener, or from a request that did not
+  originate on the page itself.
 
 ## What is not a vulnerability
 

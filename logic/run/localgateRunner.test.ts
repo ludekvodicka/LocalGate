@@ -8,10 +8,10 @@ describe("LocalgateRunner", () =>
   {
     const scripts = { dev: "next dev", start: "node app.js" };
 
-    it("appends the framework flag for a Next dev script", () =>
+    it.each(["npm", "npm.cmd"])("appends the framework flag after the %s separator", runner =>
     {
-      expect(LocalgateRunner.withPortFlag(["npm", "run", "dev"], scripts, 41277))
-        .toEqual(["npm", "run", "dev", "--", "-p", "41277"]);
+      expect(LocalgateRunner.withPortFlag([runner, "run", "dev"], scripts, 41277))
+        .toEqual([runner, "run", "dev", "--", "-p", "41277"]);
     });
 
     it("leaves a non-Next script alone, where PORT is the whole mechanism", () =>
@@ -32,10 +32,17 @@ describe("LocalgateRunner", () =>
         .toEqual(["npm", "run", "nope"]);
     });
 
-    it("works for pnpm too", () =>
+    it.each(["pnpm", "pnpm.cmd"])("passes the framework flag directly through %s", runner =>
     {
-      expect(LocalgateRunner.withPortFlag(["pnpm", "run", "dev"], scripts, 41277))
-        .toEqual(["pnpm", "run", "dev", "--", "-p", "41277"]);
+      expect(LocalgateRunner.withPortFlag([runner, "run", "dev"], scripts, 41277))
+        .toEqual([runner, "run", "dev", "-p", "41277"]);
+    });
+
+    it.each(["pnpm", "pnpm.cmd"])("passes the port through a dotenv-wrapped Next script with %s", runner =>
+    {
+      const wrapped = { dev: "dotenv -e .env-development -- next dev" };
+      expect(LocalgateRunner.withPortFlag([runner, "run", "dev", "--hostname", "127.0.0.1"], wrapped, 41277))
+        .toEqual([runner, "run", "dev", "--hostname", "127.0.0.1", "-p", "41277"]);
     });
   });
 
@@ -63,7 +70,7 @@ describe("LocalgateRunner", () =>
         .toEqual({ force: true, command: ["npm", "run", "dev"] });
     });
 
-    it("defaults to asking", () =>
+    it("defaults to no force", () =>
     {
       expect(LocalgateRunner.parseOptions(["npm", "run", "dev"]))
         .toEqual({ force: false, command: ["npm", "run", "dev"] });
@@ -156,6 +163,70 @@ describe("LocalgateRunner", () =>
       expect(LocalgateRunner.routeRegistrationMatches(route, { ...route, controlUrl: "http://127.0.0.1:52000" }, 100))
         .toBe(false);
       expect(LocalgateRunner.routeRegistrationMatches(route, route, 100)).toBe(true);
+    });
+  });
+
+  describe("killFailure", () =>
+  {
+    const route: LocalgateRoute = {
+      id: "r1",
+      names: ["myapp.localhost"],
+      port: 61_346,
+      kind: "app",
+      mode: "local",
+      cwd: "C:\\projects\\myapp",
+      command: "npm run dev",
+      controlUrl: "http://127.0.0.1:52000",
+      runnerPid: 87_016,
+      childPid: 41_188,
+      debuggerAttached: false,
+      startedAt: "2026-09-10T06:00:00.000Z",
+      state: "healthy",
+      lastResponseAt: null
+    };
+
+    // The regression this guards: the kill was fire-and-forget, so a refused taskkill and a port that
+    // stayed bound produced the same silence as a restart that worked, and the route answered success.
+    it("refuses the restart and names the port, the pid and what the kill said", () =>
+    {
+      const failure = LocalgateRunner.killFailure(route, 41_188, {
+        released: false,
+        errors: ['taskkill /T /F /PID 41188: ERROR: The process "41188" could not be terminated.']
+      }, "restarted");
+
+      expect(failure).toContain("myapp.localhost still answers on 127.0.0.1:61346");
+      expect(failure).toContain("after killing 41188");
+      expect(failure).toContain("could not be terminated");
+      expect(failure).toContain("it was not restarted");
+    });
+
+    // The same rule decides a stop, and it is the only thing a runner can honestly answer `localgate
+    // stop` with: the port is still held, so the dev server was not stopped.
+    it("refuses the stop on the same fact, and says so in its own words", () =>
+    {
+      const failure = LocalgateRunner.killFailure(route, 41_188, {
+        released: false,
+        errors: ["taskkill /T /F /PID 41188: ERROR: Access is denied."]
+      }, "stopped");
+
+      expect(failure).toContain("myapp.localhost still answers on 127.0.0.1:61346");
+      expect(failure).toContain("Access is denied");
+      expect(failure).toContain("it was not stopped");
+    });
+
+    it("passes a released port, which is the only half of a restart this can see", () =>
+    {
+      expect(LocalgateRunner.killFailure(route, 41_188, { released: true, errors: [] }, "restarted")).toBeNull();
+      expect(LocalgateRunner.killFailure(route, 41_188, { released: true, errors: [] }, "stopped")).toBeNull();
+    });
+
+    // A first kill that failed and a second that freed the port is still a restart: the port decides.
+    it("passes a port that came free despite a kill that failed", () =>
+    {
+      expect(LocalgateRunner.killFailure(route, 41_188, {
+        released: true,
+        errors: ["taskkill /T /F /PID 41188: ERROR: The process \"41188\" not found."]
+      }, "restarted")).toBeNull();
     });
   });
 
