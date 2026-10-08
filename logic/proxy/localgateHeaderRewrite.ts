@@ -17,6 +17,12 @@ export class LocalgateHeaderRewrite
 
   static apply(requestUrl: string, headers: IncomingHttpHeaders, requestHost: string, canonicalName: string): void
   {
+    // Routing has already validated Host. Auth libraries prefer forwarded headers, so an unrelated
+    // forwarded host must not override it. A TLS-terminating tunnel supplies the original protocol.
+    headers["x-forwarded-host"] = requestHost;
+    if (headers["x-forwarded-proto"] != "http" && headers["x-forwarded-proto"] != "https")
+      headers["x-forwarded-proto"] = "http";
+
     if (!LocalgateHeaderRewrite.isInternalPath(requestUrl)) return;
 
     const requestHostname = LocalgateHeaderRewrite.hostnameOf(requestHost);

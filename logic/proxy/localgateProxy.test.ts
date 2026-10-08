@@ -38,6 +38,8 @@ describe("LocalgateProxy", () =>
           url: request.url,
           method: request.method,
           host: request.headers.host,
+          forwardedHost: request.headers["x-forwarded-host"],
+          forwardedProto: request.headers["x-forwarded-proto"],
           origin: request.headers.origin ?? null,
           referer: request.headers.referer ?? null,
           body: Buffer.concat(chunks).toString("utf8")
@@ -219,6 +221,25 @@ describe("LocalgateProxy", () =>
       origin: "http://web.dev.example.com"
     });
     expect((JSON.parse(application.text) as Record<string, unknown>).origin).toBe("http://web.dev.example.com");
+  });
+
+  it.each([
+    ["myapp.localhost:8080", undefined, "http"],
+    ["myapp.dev.example.com:8080", undefined, "http"],
+    ["pub-myapp.example.com", "https", "https"],
+    ["pub-myapp.example.com", "http", "http"],
+    ["myapp.localhost", "https, http", "http"]
+  ])("forwards the auth origin for %s with protocol %s", async (host, forwardedProto, expectedProtocol) =>
+  {
+    const harness = await startProxy({ lanIp: "127.0.0.1" });
+    harness.registry.register({ ...registration(harness.upstreamPort,
+      ["myapp.localhost", "myapp.dev.example.com", "pub-myapp.example.com"]), mode: "internet" },
+    new Date().toISOString());
+    const headers: Record<string, string> = { host: host!, "x-forwarded-host": "foreign.example.com" };
+    if (forwardedProto) headers["x-forwarded-proto"] = forwardedProto;
+    const result = await call(host!.includes(".localhost") ? harness.port : harness.lanPort!, "/api/auth/providers", headers);
+    expect(result.status).toBe(201);
+    expect(JSON.parse(result.text)).toMatchObject({ host, forwardedHost: host, forwardedProto: expectedProtocol });
   });
 
   it("answers an unknown hostname on loopback with the list of what is running", async () =>

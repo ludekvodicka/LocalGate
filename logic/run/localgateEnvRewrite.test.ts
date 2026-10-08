@@ -33,8 +33,8 @@ describe("LocalgateEnvRewrite", () =>
     const result = LocalgateEnvRewrite.apply(pilotEnv(), "lan", machine(), 80);
 
     expect(result.NEXT_PUBLIC_APP_URL).toBe("http://myapp.dev.example.com");
-    expect(result.AUTH_URL).toBe("http://myapp.dev.example.com");
-    expect(result.NEXTAUTH_URL).toBe("http://myapp.dev.example.com/api/auth");
+    expect(result.AUTH_URL).toBe("http://myapp.localhost");
+    expect(result.NEXTAUTH_URL).toBe("http://myapp.localhost/api/auth");
     expect(result.APP_BACKEND_WAGTAIL_API_PUBLIC_URL).toBe("http://cms.dev.example.com");
   });
 
@@ -82,7 +82,7 @@ describe("LocalgateEnvRewrite", () =>
     const result = LocalgateEnvRewrite.apply(pilotEnv(), "lan", machine(), 8_080);
 
     expect(result.NEXT_PUBLIC_APP_URL).toBe("http://myapp.dev.example.com:8080");
-    expect(result.AUTH_URL).toBe("http://myapp.dev.example.com:8080");
+    expect(result.AUTH_URL).toBe("http://myapp.localhost:8080");
   });
 
   it("ignores a value that is not a URL and a host that is not .localhost", () =>
@@ -123,5 +123,19 @@ describe("LocalgateEnvRewrite", () =>
 
     expect(result.NEXT_PUBLIC_APP_URL).toBe("https://pub-myapp.example.com");
     expect(result.APP_BACKEND_WAGTAIL_API_PUBLIC_URL).toBe("https://pub-cms.example.com");
+    expect(result.AUTH_URL).toBe("http://myapp.localhost:8080");
+    expect(result.NEXTAUTH_URL).toBe("http://myapp.localhost:8080/api/auth");
+  });
+
+  it.each(["local", "lan", "internet"] as const)("leaves auth configuration owned by the application in %s mode", mode =>
+  {
+    expect(LocalgateEnvRewrite.apply({}, mode, machine(), 80)).toEqual({});
+    const env = {
+      AUTH_URL: "https://auth.example.com/custom/auth",
+      NEXTAUTH_URL: "https://auth.example.com/custom/auth",
+      NEXTAUTH_URL_INTERNAL: "http://myapp.localhost/api/auth",
+      AUTH_TRUST_HOST: "false"
+    };
+    expect(LocalgateEnvRewrite.apply(env, mode, machine(), 80)).toEqual(env);
   });
 });

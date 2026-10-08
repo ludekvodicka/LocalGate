@@ -15,7 +15,6 @@ import { LocalgateUrl } from "../proxy/localgateUrl.ts";
 export class LocalgateEnvRewrite
 {
   private static readonly localSuffixConst = ".localhost";
-  private static readonly browserFacingNamesConst = ["AUTH_URL", "NEXTAUTH_URL"];
 
   static apply(env: NodeJS.ProcessEnv, mode: LocalgateMode, machine: LocalgateMachineSettings | null,
     proxyPort: number): NodeJS.ProcessEnv
@@ -37,9 +36,7 @@ export class LocalgateEnvRewrite
 
   static isBrowserFacing(key: string): boolean
   {
-    return key.startsWith("NEXT_PUBLIC_")
-      || key.endsWith("_PUBLIC_URL")
-      || LocalgateEnvRewrite.browserFacingNamesConst.includes(key);
+    return key.startsWith("NEXT_PUBLIC_") || key.endsWith("_PUBLIC_URL");
   }
 
   // Substitutes the authority only, and by string replacement rather than URL.toString(), so a value

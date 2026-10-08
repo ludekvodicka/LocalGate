@@ -278,11 +278,23 @@ their own names without either name being in the repository:
 
 With that file present, `myapp` in mode `lan` also answers on `myapp.dev.example.com`, while mode
 `internet` additionally answers on `pub-myapp.example.com`. Browser-facing
-environment variables (`NEXT_PUBLIC_*`, `*_PUBLIC_URL`, `AUTH_URL`, `NEXTAUTH_URL`) are rewritten from
+environment variables (`NEXT_PUBLIC_*`, `*_PUBLIC_URL`) are rewritten from
 `.localhost` to the name selected by the current mode on the way into the dev server. Public URLs use
 HTTPS and never carry the proxy's internal LAN port. Server-side variables stay on `.localhost`.
 Node children get a lookup hook for that reserved suffix, so Fetch and the standard HTTP clients reach
 the local proxy even when the operating system resolver does not expand nested localhost names.
+
+For Auth.js applications that serve several origins, omit `AUTH_URL` and `NEXTAUTH_URL` from the
+application's development env files and launch environment, and configure `trustHost: true` or
+`AUTH_TRUST_HOST=true`. Authentication can then follow each request's origin. Localgate sets
+`X-Forwarded-Host` to the routed `Host`, including its port, and defaults `X-Forwarded-Proto` to `http`,
+preserving a tunnel's single `http` or `https` value. Each origin keeps its own session cookie.
+
+Localgate does not delete auth settings, set trust flags or intercept env-file loading. Explicit auth
+URLs keep their configured hostname; as with other server URLs, a `.localhost` value receives the
+proxy port. This replaces the earlier behavior that rewrote auth URLs to the LAN or public hostname.
+Custom auth paths, cookie prefixes and older NextAuth server helpers remain application configuration.
+See [docs/architecture/auth-origin.md](docs/architecture/auth-origin.md) for compatibility and restart steps.
 
 For reaching an app from outside the LAN, `localgate cloudflare-info` prints the exact prefixed DNS
 record and tunnel ingress entry. It prints them and stops: localgate holds no API token and sends

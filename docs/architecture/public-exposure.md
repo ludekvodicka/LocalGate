@@ -38,6 +38,11 @@ Browser-facing environment values use the selected mode:
 - `lan`: the LAN name and the Localgate proxy port
 - `internet`: the public HTTPS name without the proxy's internal LAN port
 
+Authentication URLs are application-owned server settings. To sign in independently on every served
+origin, configure the auth library to trust request headers and omit its fixed origin from the
+application's development environment. The proxy forwards the browser host and protocol; it does not
+remove env values or change the library's configuration. See [auth-origin.md](auth-origin.md).
+
 Server-only environment values keep their canonical `.localhost` name. The runner adds a non-default
 proxy port when needed and gives Node children a lookup hook that maps nested `.localhost` names to
 `127.0.0.1`.
