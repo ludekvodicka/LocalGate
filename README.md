@@ -237,6 +237,12 @@ The takeover above is the one place this matters for safety. **With no terminal 
 the developer's session by accident; `localgate run --force` takes over deliberately. To pick up a
 change, use `localgate restart`, which keeps the runner, the terminal and the debugger.
 
+A dev server lives as long as the terminal that started it. When an agent's command ends and takes its
+console along, the runner notices within 10 s and stops the dev server the way Ctrl+C does, instead of
+leaving it running on a console that no longer exists. On Windows such a server could start no child
+process, and a Next.js dev server then restarted its worker processes in a loop. See
+[docs/architecture/terminal-loss.md](docs/architecture/terminal-loss.md).
+
 ## Names, and who can reach them
 
 A project gets its name from `package.json`, and nothing else is needed to work locally:
@@ -314,6 +320,9 @@ get a readable page instead of a browser error, and it says what to do next:
 | `starting` | 503, "still starting, reload in a moment" - a refused connection right after launch is normal |
 | `dead` | 503, "nothing is listening" plus the `prune` hint - the route outlived its dev server |
 | `unresponsive` | 504, after three requests in a row went unanswered, with the exact `localgate restart` line to run |
+
+A reset on a kept-alive connection is not one of these states: the proxy sends a `GET`, `HEAD` or
+`OPTIONS` request once more on a fresh connection first ([upstream keep-alive](docs/architecture/upstream-keep-alive.md)).
 
 Acting on it is the risky half, so it is opt-in: `"autoRestart": true` in `~/.localgate/config.json`
 lets the proxy restart an unresponsive app by itself, bounded by two attempts and a five-minute

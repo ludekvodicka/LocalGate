@@ -1,6 +1,6 @@
 {
   "name": "localgate",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Stable names for local dev servers: one port 80 multiplexed by Host, plus an API that can restart a dev server owned by your editor.",
   "type": "module",
   "license": "Apache-2.0",
@@ -24,7 +24,7 @@
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@11.17.0",
+  "packageManager": "pnpm@12.8.1",
   "bin": {
     "localgate": "bin/localgate.mjs"
   },

@@ -1,4 +1,5 @@
-import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { Agent, createServer, request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server,
+  type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { LocalgateControlApi } from "./localgateControlApi.ts";
 import { LocalgateHeaderRewrite } from "./localgateHeaderRewrite.ts";
@@ -17,7 +18,13 @@ export type LocalgateProxyOptions =
 
 export class LocalgateProxy
 {
+  // Node servers, Next included, close a kept-alive socket after 5 s without a request. Dropping ours after
+  // 1 s keeps a page load on warm sockets while leaving the dev server's timer far behind.
+  private static readonly idleSocketMsConst = 1_000;
+  private static readonly replayableMethodsConst = ["GET", "HEAD", "OPTIONS"];
+
   private readonly servers: Server[] = [];
+  private readonly upstreamAgent = new Agent({ keepAlive: true, timeout: LocalgateProxy.idleSocketMsConst });
   // An upgraded socket is handed to us and stops being tracked by the http server, so
   // closeAllConnections cannot reach it. The proxy keeps its own set, or a single open browser tab
   // holding an HMR websocket would keep it alive forever and defeat the self-exit.
@@ -66,6 +73,7 @@ export class LocalgateProxy
 
     await Promise.all(this.servers.map(server => new Promise<void>(resolve => server.close(() => resolve()))));
     this.servers.length = 0;
+    this.upstreamAgent.destroy();
   }
 
   // Called after every control-API mutation: the proxy exists to serve routes, so when the last one goes
@@ -146,12 +154,25 @@ export class LocalgateProxy
     const headers = { ...request.headers };
     LocalgateHeaderRewrite.apply(request.url ?? "/", headers, request.headers.host ?? "", route.names[0]!);
 
+    // Only a request that may be sent twice takes a kept-alive socket: a body is streamed through once, and
+    // a method that changes state must not run again because the first attempt might have reached the server.
+    const replayable = LocalgateProxy.replayableMethodsConst.includes(request.method ?? "")
+      && request.headers["content-length"] === undefined && request.headers["transfer-encoding"] === undefined;
+    if (replayable) request.resume();
+    this.dial(route, request, response, headers, replayable, false);
+  }
+
+  private dial(route: LocalgateRoute, request: IncomingMessage, response: ServerResponse, headers: OutgoingHttpHeaders,
+    replayable: boolean, retry: boolean): void
+  {
+    const reuse = replayable && !retry;
     const upstream = httpRequest({
       host: "127.0.0.1",
       port: route.port,
       method: request.method,
       path: request.url,
-      headers
+      headers,
+      agent: reuse ? this.upstreamAgent : false
     });
 
     upstream.setTimeout(LocalgateHealth.requestTimeoutMs(), () =>
@@ -192,6 +213,13 @@ export class LocalgateProxy
         return;
       }
 
+      // The dev server closed a kept-alive socket while this request was on its way. A server whose event
+      // loop is blocked (a debugger, a long compile) runs its idle timer late, so the close can come seconds
+      // after the request arrived. The reset says nothing about the route, so the request goes once more on
+      // a fresh connection before the route is judged.
+      if (reuse && upstream.reusedSocket && error.code == "ECONNRESET")
+        return this.dial(route, request, response, headers, replayable, true);
+
       if (error.code == "ECONNREFUSED" || error.code == "ECONNRESET")
       {
         this.health.noteConnectionRefused(route);
@@ -203,7 +231,9 @@ export class LocalgateProxy
       LocalgateProxy.sendText(response, 502, `localgate: upstream error for ${route.names[0]}: ${error.message}\n`);
     });
 
-    request.pipe(upstream);
+    // A replayable request has already ended by the time of a retry, so piping it would never end the new one.
+    if (replayable) upstream.end();
+    else request.pipe(upstream);
   }
 
   // Hot module reload runs over a websocket, so the upgrade has to be proxied or every edit needs a

@@ -9,6 +9,7 @@ import { LocalgateNames } from "../config/localgateNames.ts";
 import { LocalgateProjectConfig, type LocalgateProjectSettings } from "../config/localgateProjectConfig.ts";
 import { LocalgateRouteConflictError } from "../proxy/localgateRegistry.ts";
 import type { LocalgateRoute, LocalgateRouteRegistration } from "../proxy/localgateRegistry.ts";
+import { LocalgateConsole } from "./localgateConsole.ts";
 import { LocalgateEnvRewrite } from "./localgateEnvRewrite.ts";
 import { LocalgateNodeOptions } from "./localgateNodeOptions.ts";
 import { LocalgateProcessTree, type LocalgateKillOutcome } from "./localgateProcessTree.ts";
@@ -40,6 +41,7 @@ export class LocalgateRunner
   private stopping = false;
   private restarting = false;
   private reportedLostRoute = false;
+  private reportedConsoleProbe = false;
   private exitCode = 0;
 
   constructor(
@@ -511,13 +513,24 @@ export class LocalgateRunner
   // The proxy holds the route table in memory, so if it dies the route dies with it. Another runner may
   // start the proxy before this heartbeat, so a successful ping is not enough: this runner verifies that
   // its own route is present and re-registers when it is missing.
+  //
+  // The same beat notices a terminal that went without a signal: an agent's command ending takes its
+  // console host along, nothing tells the processes attached to it, and the dev tree is left unable to
+  // start any child. That is the operator leaving, so it ends the way Ctrl+C does.
   private startHeartbeat(): NodeJS.Timeout
   {
+    const terminal = new LocalgateConsole();
     const timer = setInterval(() =>
     {
       void (async () =>
       {
         if (this.stopping || !this.route) return;
+
+        if (this.terminalLost(terminal))
+        {
+          await this.shutdown(0);
+          return;
+        }
 
         const registered = await LocalgateProxyClient.resolve({ name: this.route.names[0] }).catch(() => null);
         if (LocalgateRunner.routeRegistrationMatches(this.route, registered, process.pid))
@@ -567,15 +580,38 @@ export class LocalgateRunner
     return timer;
   }
 
-  private installSignalHandlers(): void
+  private terminalLost(terminal: LocalgateConsole): boolean
   {
-    for (const signal of ["SIGINT", "SIGTERM"] as const)
-      process.on(signal, () => void this.shutdown(0));
+    try
+    {
+      return terminal.lost();
+    }
+    catch (error)
+    {
+      // Said once: an error this probe does not know repeats on every beat, and the runner keeps working.
+      if (!this.reportedConsoleProbe)
+        process.stderr.write(`localgate: could not check the terminal: ${String(error)}\n`);
+      this.reportedConsoleProbe = true;
+      return false;
+    }
   }
 
-  // Ctrl+C and the terminal going away, which is the operator leaving: the runner ends whatever the kill
-  // achieved, and a port that outlived the child is a line on the way out. `/stop` is the other way in,
-  // and it is the opposite - there somebody is waiting for the answer, so a refused kill is refused.
+  // SIGHUP is the terminal window closing (on Windows the console close event). Without a handler Node
+  // exits at once and skips the kill, the port check and the route release.
+  private installSignalHandlers(): void
+  {
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
+      process.on(signal, () => void this.shutdown(0));
+    // A terminal that is gone answers every write with EPIPE. Unhandled, that error would end the runner
+    // in the middle of its shutdown, before the route is released; the output is lost either way.
+    for (const stream of [process.stdout, process.stderr])
+      stream.on("error", () => {});
+  }
+
+  // Ctrl+C and the terminal going away (SIGHUP, or a console the heartbeat finds gone), which is the
+  // operator leaving: the runner ends whatever the kill achieved, and a port that outlived the child is
+  // a line on the way out. `/stop` is the other way in, and it is the opposite - there somebody is
+  // waiting for the answer, so a refused kill is refused.
   private async shutdown(code: number): Promise<void>
   {
     if (this.stopping) return;

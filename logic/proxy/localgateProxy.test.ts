@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createServer, request as httpRequest, type IncomingHttpHeaders, type Server } from "node:http";
+import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type Server,
+  type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import type { LocalgateMachineSettings } from "../config/localgateMachineConfig.ts";
 import { LocalgateControlApi } from "./localgateControlApi.ts";
@@ -338,6 +339,95 @@ describe("LocalgateProxy", () =>
     expect(result.text).toContain("still starting");
     expect(harness.registry.byHostname("web.localhost", "loopback")?.state).toBe("starting");
   });
+
+  // The handler sees the request and the port of the socket that carried it, so a test can tell a reused
+  // socket from a fresh one and act on either.
+  const startCustomUpstream = async (handler: (request: IncomingMessage, response: ServerResponse, socketPort: number) => void) =>
+  {
+    const server = createServer((request, response) => handler(request, response, request.socket.remotePort!));
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address == "string") throw new Error("no upstream port");
+    const close = async () =>
+    {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    };
+    return { port: address.port, close };
+  };
+
+  it("sends a GET once more on a fresh connection when the dev server resets a kept-alive socket", async () =>
+  {
+    const served = new Set<number>();
+    const sockets: number[] = [];
+    const upstream = await startCustomUpstream((request, response, socketPort) =>
+    {
+      sockets.push(socketPort);
+      // What a dev server with a blocked event loop does: its idle timer closes the socket the next
+      // request already arrived on.
+      if (served.has(socketPort)) return request.socket.destroy();
+      served.add(socketPort);
+      response.end("ok");
+    });
+    try
+    {
+      const harness = await startProxy({ upstreamPort: upstream.port });
+      harness.registry.register(registration(upstream.port, ["web.localhost"]), new Date().toISOString());
+
+      expect((await call(harness.port, "/", { host: "web.localhost" })).text).toBe("ok");
+      const second = await call(harness.port, "/", { host: "web.localhost" });
+
+      expect(second.status).toBe(200);
+      expect(second.text).toBe("ok");
+      expect(sockets).toHaveLength(3);
+      expect(sockets[1]).toBe(sockets[0]);
+      expect(sockets[2]).not.toBe(sockets[0]);
+      expect(harness.registry.byHostname("web.localhost", "loopback")?.state).toBe("healthy");
+    }
+    finally { await upstream.close(); }
+  });
+
+  it("sends a request with a body on its own connection, so it is never sent twice", async () =>
+  {
+    const sockets: number[] = [];
+    const upstream = await startCustomUpstream((request, response, socketPort) =>
+    {
+      sockets.push(socketPort);
+      const chunks: Buffer[] = [];
+      request.on("data", chunk => chunks.push(chunk as Buffer));
+      request.on("end", () => response.end(Buffer.concat(chunks)));
+    });
+    try
+    {
+      const harness = await startProxy({ upstreamPort: upstream.port });
+      harness.registry.register(registration(upstream.port, ["web.localhost"]), new Date().toISOString());
+
+      expect((await call(harness.port, "/", { host: "web.localhost" }, "first")).text).toBe("first");
+      expect((await call(harness.port, "/", { host: "web.localhost" }, "second")).text).toBe("second");
+
+      expect(sockets).toHaveLength(2);
+      expect(sockets[1]).not.toBe(sockets[0]);
+    }
+    finally { await upstream.close(); }
+  });
+
+  it("waits for a response slower than the idle socket limit on a fresh and on a reused socket", async () =>
+  {
+    const upstream = await startCustomUpstream((_request, response) => { setTimeout(() => response.end("slow"), 1_500); });
+    try
+    {
+      const harness = await startProxy({ upstreamPort: upstream.port });
+      harness.registry.register(registration(upstream.port, ["web.localhost"]), new Date().toISOString());
+
+      for (let attempt = 0; attempt < 2; attempt++)
+      {
+        const result = await call(harness.port, "/", { host: "web.localhost" });
+        expect(result.status).toBe(200);
+        expect(result.text).toBe("slow");
+      }
+    }
+    finally { await upstream.close(); }
+  }, 10_000);
 
   it("refuses a .localhost name on the LAN listener and serves the shared one", async () =>
   {
