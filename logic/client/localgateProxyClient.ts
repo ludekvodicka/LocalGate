@@ -100,15 +100,21 @@ export class LocalgateProxyClient
     return ((await response.json()) as { route: LocalgateRoute | null }).route;
   }
 
-  // Two levels of spawn on Windows, deliberately: `cmd` exits immediately, so the proxy's recorded
-  // parent is already gone and the tree kill VSCode performs when a terminal closes cannot reach it.
-  // Otherwise closing one project's terminal would take the routing of every other project with it.
+  // Two levels of spawn on Windows, deliberately: the intermediate exits immediately, so the proxy's
+  // recorded parent is already gone and the tree kill VSCode performs when a terminal closes cannot
+  // reach it. Otherwise closing one project's terminal would take the routing of every other project
+  // with it. The intermediate is node, not `cmd /c start /b`: a detached child gets DETACHED_PROCESS,
+  // so cmd had no console and Windows allocated a new one for the proxy - a visible window when
+  // Windows Terminal is the default terminal. A detached child of a detached node has no console.
+  private static readonly windowsLauncherConst = "require('node:child_process').spawn(process.execPath, "
+    + "process.argv.slice(1), { detached: true, stdio: 'ignore', windowsHide: true }).unref()";
+
   private static spawnDetached(): void
   {
     const entry = join(fileURLToPath(new URL("../../", import.meta.url)), "bin", "localgate.mjs");
 
     const child = process.platform == "win32"
-      ? spawn("cmd", ["/c", "start", "\"\"", "/b", process.execPath, entry, "__proxy"],
+      ? spawn(process.execPath, ["-e", LocalgateProxyClient.windowsLauncherConst, entry, "__proxy"],
         { detached: true, stdio: "ignore", windowsHide: true })
       : spawn(process.execPath, [entry, "__proxy"], { detached: true, stdio: "ignore" });
 
