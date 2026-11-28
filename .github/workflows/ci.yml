@@ -8,8 +8,8 @@ on:
 # Both platforms, because the process kill, the port-holder lookup and the port the proxy binds all
 # differ between them. A green run on one says nothing about the other.
 jobs:
-  verify:
-    name: type-check + lint + tests
+  check:
+    name: lint + typecheck + tests
     strategy:
       fail-fast: false
       matrix:
@@ -29,8 +29,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify
-        run: pnpm run verify
+      - name: Check
+        run: pnpm run check
 
   # Secret scan — a post-push SAFETY NET for outside contributor PRs, NOT the primary defense. It runs
   # AFTER a push lands, so it cannot prevent a leak; a pushed secret is already exposed and must be

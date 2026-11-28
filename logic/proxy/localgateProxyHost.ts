@@ -75,7 +75,7 @@ export class LocalgateProxyHost
   {
     if (route.controlUrl) return LocalgateProxyHost.request(route, "stop");
 
-    const name = LocalgateNames.shortName(route.names[0]!);
+    const name = LocalgateNames.shortName(route.names[0]);
     const command = LocalgateAliasStore.stopCommands().get(name);
     if (!command) throw new Error(`${name} is an alias with no stop command in ${LocalgateAliasStore.filePath()}`);
 

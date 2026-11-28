@@ -37,8 +37,8 @@ jobs:
 
       # The tag is cut from a commit CI already checked, but a release is the one thing worth checking
       # twice: what ships to npm is this tree, not the one the tag was reviewed on.
-      - name: Verify
-        run: pnpm run verify
+      - name: Check
+        run: pnpm run check
 
       - name: Check the tag matches the version being published
         run: |

@@ -10,11 +10,14 @@ coverage/
 # Our internal deploy descriptor. Read in place by our own tooling and kept in INTERNAL SVN, but
 # NEVER in the public git repo — a public clone has none of that toolchain.
 .axapp.json
+**/.atomix-shared.json
 
 # AI workflow artifacts (plans, research, sessions, ideas). Kept in INTERNAL SVN so they travel
 # with the repo across our PCs, but NEVER pushed to the public repo — they carry internal
 # references and our process history. The public repo ships only docs/.
 .aidocs/
+.checkpoints/
+.worktrees/
 
 # Our private publish tooling (export gate, publish script, pre-push hook, runbook) and any other
 # owner-only files. Kept in INTERNAL SVN so it syncs across our PCs, never public.

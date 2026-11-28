@@ -37,6 +37,6 @@ export class LocalgatePortProbe
   static async listeningRoutes(routes: Pick<LocalgateRoute, "id" | "port">[]): Promise<Map<string, boolean>>
   {
     const answers = await Promise.all(routes.map(route => LocalgatePortProbe.listening(route.port)));
-    return new Map(routes.map((route, index) => [route.id, answers[index]!]));
+    return new Map(routes.map((route, index) => [route.id, answers[index]]));
   }
 }

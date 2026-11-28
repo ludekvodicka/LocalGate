@@ -372,7 +372,7 @@ switch back from `internet` when you are done. There is no TLS - it is plain htt
 ## Development
 
 ```bash
-pnpm run verify      # type-check + lint + tests
+pnpm run check       # lint + typecheck + tests
 pnpm test            # vitest
 ```
 

@@ -35,7 +35,7 @@ describe("LocalgateStartPage", () =>
 
   const stopper: LocalgateRouteStopper = {
     aliasStopCommands: () => aliasStops,
-    stop: async route => { stopped.push(route.names[0]!); }
+    stop: async route => { stopped.push(route.names[0]); }
   };
 
   beforeEach(() => { stopped.length = 0; aliasStops.clear(); });
@@ -196,7 +196,7 @@ describe("LocalgateStartPage", () =>
     const [up, down] = registry.all();
     const page = new LocalgateStartPage(registry, machine, 80, stopper);
 
-    const html = page.render("loopback", { listening: new Map([[up!.id, true], [down!.id, false]]) });
+    const html = page.render("loopback", { listening: new Map([[up.id, true], [down.id, false]]) });
 
     expect(html).toContain(">running<");
     expect(html).toContain(">not running<");
@@ -239,7 +239,7 @@ describe("LocalgateStartPage", () =>
   it("keeps the wedged verdict the forwarded traffic reached", () =>
   {
     const registry = registryWith(registration(["myapp.localhost"]));
-    const route = registry.all()[0]!;
+    const route = registry.all()[0];
     registry.update(route.id, { state: "unresponsive" });
     const page = new LocalgateStartPage(registry, machine, 80, stopper);
 

@@ -101,7 +101,7 @@ export class LocalgateProxy
   {
     const reachedFrom: LocalgateReach = loopback ? "loopback" : "lan";
     const server = createServer((request, response) => void this.handleRequest(request, response, loopback, reachedFrom));
-    server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket as Duplex, head, reachedFrom));
+    server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, reachedFrom));
 
     return new Promise<void>((resolve, reject) =>
     {
@@ -152,7 +152,7 @@ export class LocalgateProxy
         + "service actually listens on.\n");
 
     const headers = { ...request.headers };
-    LocalgateHeaderRewrite.apply(request.url ?? "/", headers, request.headers.host ?? "", route.names[0]!);
+    LocalgateHeaderRewrite.apply(request.url ?? "/", headers, request.headers.host ?? "", route.names[0]);
 
     // Only a request that may be sent twice takes a kept-alive socket: a body is streamed through once, and
     // a method that changes state must not run again because the first attempt might have reached the server.
@@ -250,7 +250,7 @@ export class LocalgateProxy
     }
 
     const headers = { ...request.headers };
-    LocalgateHeaderRewrite.apply(request.url ?? "/", headers, request.headers.host ?? "", route.names[0]!);
+    LocalgateHeaderRewrite.apply(request.url ?? "/", headers, request.headers.host ?? "", route.names[0]);
 
     const upstream = httpRequest({
       host: "127.0.0.1",
@@ -321,7 +321,7 @@ export class LocalgateProxy
 
     // The port this request arrived on, not the configured one: the two differ when the proxy was asked
     // for an ephemeral port, and a hint pointing at a port nothing listens on is worse than no hint.
-    lines.push("", `Every route, with its addresses: ${LocalgateStartPage.localUrl(this.boundPorts()[0]!)}`, "");
+    lines.push("", `Every route, with its addresses: ${LocalgateStartPage.localUrl(this.boundPorts()[0])}`, "");
     return lines.join("\n");
   }
 

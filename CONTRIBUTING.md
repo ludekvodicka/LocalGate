@@ -29,7 +29,7 @@ this changes how you contribute: open an issue, send a PR, and it will be picked
 
 ```bash
 pnpm install
-pnpm run verify      # type-check + lint + tests — the same gate CI runs
+pnpm run check       # lint + typecheck + tests — the same gate CI runs
 ```
 
 There is no build step: `bin/localgate.mjs` runs the TypeScript sources through tsx, so a working copy
@@ -58,7 +58,7 @@ Match the surrounding code. In short:
 ## Before you open a PR
 
 ```bash
-pnpm run verify
+pnpm run check
 ```
 
 - No secrets, machine-specific paths, hostnames or personal data. Examples in code, tests and docs use

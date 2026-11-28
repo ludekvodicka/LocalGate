@@ -189,7 +189,7 @@ describe("LocalgateProcessTree", () =>
       await vi.waitFor(() => expect(output).toContain("LISTENER="), { timeout: 15_000, interval: 50 });
       const match = /LISTENER=(\{[^\r\n]+\})/.exec(output);
       expect(match).not.toBeNull();
-      listener = JSON.parse(match![1]!) as { pid: number; port: number };
+      listener = JSON.parse(match![1]) as { pid: number; port: number };
       expect(listener.pid).not.toBe(child.pid);
       expect(await LocalgateProcessTree.findPortHolder(listener.port)).toBe(listener.pid);
 

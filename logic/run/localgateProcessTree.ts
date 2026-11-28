@@ -224,7 +224,7 @@ export class LocalgateProcessTree
     catch (error)
     {
       throw new Error(`${file} ${JSON.stringify(args)} [shell=false timeout=${timeout}ms]: `
-        + LocalgateProcessTree.describeFailure(error));
+        + LocalgateProcessTree.describeFailure(error), { cause: error });
     }
   }
 

@@ -327,8 +327,8 @@ export class LocalgateStartPage
       "<span class=\"title\">",
       asking
         ? `<span class="name">${LocalgateStartPage.escape(name)}</span>`
-        : `<a class="name" href="${LocalgateStartPage.escape(primary!.url)}">${LocalgateStartPage.escape(name)}</a>`,
-      `<span class="primary">${LocalgateStartPage.escape(primary!.hostname)}</span>`,
+        : `<a class="name" href="${LocalgateStartPage.escape(primary.url)}">${LocalgateStartPage.escape(name)}</a>`,
+      `<span class="primary">${LocalgateStartPage.escape(primary.hostname)}</span>`,
       "</span>",
       `<span class="state ${status.shade}"><span class="dot"></span>`
         + `${LocalgateStartPage.escape(status.word)}</span>`,
@@ -385,8 +385,8 @@ export class LocalgateStartPage
   {
     const words = name.split("-").filter(word => word.length > 0);
     if (words.length == 0) return "?";
-    if (words.length == 1) return words[0]!.slice(0, 2).toUpperCase();
-    return `${words[0]![0]!}${words[words.length - 1]!.slice(0, 2)}`.toUpperCase();
+    if (words.length == 1) return words[0].slice(0, 2).toUpperCase();
+    return `${words[0][0]}${words[words.length - 1].slice(0, 2)}`.toUpperCase();
   }
 
   // A colour the name always gets back, so a card keeps its look across a refresh and a person finds an
@@ -445,7 +445,7 @@ export class LocalgateStartPage
 
   private static appName(route: LocalgateRoute): string
   {
-    return LocalgateNames.shortName(route.names[0]!);
+    return LocalgateNames.shortName(route.names[0]);
   }
 
   private subtitle(count: number, loopback: boolean): string

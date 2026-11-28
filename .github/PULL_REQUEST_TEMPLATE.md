@@ -11,7 +11,7 @@
 ## Checklist
 
 - [ ] Discussed in an issue first (for anything non-trivial)
-- [ ] `pnpm run verify` passes
+- [ ] `pnpm run check` passes
 - [ ] New behaviour has a test
 - [ ] No secrets, machine-specific paths, hostnames or personal data (examples use `example.com` / `192.0.2.x`)
 - [ ] Matches the style of the surrounding code

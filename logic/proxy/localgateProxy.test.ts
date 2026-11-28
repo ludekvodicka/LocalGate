@@ -78,7 +78,7 @@ describe("LocalgateProxy", () =>
     const stopped: string[] = [];
     const startPage = new LocalgateStartPage(registry, options.machine ?? null, 80, {
       aliasStopCommands: () => options.aliasStops ?? new Map(),
-      stop: async route => { stopped.push(route.names[0]!); }
+      stop: async route => { stopped.push(route.names[0]); }
     });
     const proxy = new LocalgateProxy(registry, health, new LocalgateControlApi(registry, () => proxy.checkIdle()), startPage, {
       port: 0,
@@ -93,7 +93,7 @@ describe("LocalgateProxy", () =>
     const harness: Harness = {
       proxy,
       registry,
-      port: ports[0]!,
+      port: ports[0],
       lanPort: ports[1] ?? null,
       upstreamPort,
       stopped,
@@ -236,9 +236,9 @@ describe("LocalgateProxy", () =>
     harness.registry.register({ ...registration(harness.upstreamPort,
       ["myapp.localhost", "myapp.dev.example.com", "pub-myapp.example.com"]), mode: "internet" },
     new Date().toISOString());
-    const headers: Record<string, string> = { host: host!, "x-forwarded-host": "foreign.example.com" };
+    const headers: Record<string, string> = { host: host, "x-forwarded-host": "foreign.example.com" };
     if (forwardedProto) headers["x-forwarded-proto"] = forwardedProto;
-    const result = await call(host!.includes(".localhost") ? harness.port : harness.lanPort!, "/api/auth/providers", headers);
+    const result = await call(host.includes(".localhost") ? harness.port : harness.lanPort!, "/api/auth/providers", headers);
     expect(result.status).toBe(201);
     expect(JSON.parse(result.text)).toMatchObject({ host, forwardedHost: host, forwardedProto: expectedProtocol });
   });

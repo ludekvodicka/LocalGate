@@ -36,18 +36,18 @@
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "lint": "eslint .",
-    "type-check": "tsc --noEmit",
-    "verify": "pnpm run type-check && pnpm run lint && pnpm run test"
+    "lint": "oxlint --type-aware",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm test"
   },
   "dependencies": {
     "tsx": "4.21.0"
   },
   "devDependencies": {
     "@types/node": "25.5.0",
-    "eslint": "9.22.0",
+    "oxlint": "1.95.0",
+    "oxlint-tsgolint": "7.0.2008",
     "typescript": "5.8.3",
-    "typescript-eslint": "8.27.0",
     "vitest": "5.1.1"
   }
 }

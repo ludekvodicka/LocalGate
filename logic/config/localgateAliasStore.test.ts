@@ -77,7 +77,7 @@ describe("LocalgateAliasStore", () =>
     try
     {
       expect(LocalgateAliasStore.load(path)).toEqual([{ name: "cms", port: 8_002, stop: null }]);
-      expect(String(written.mock.calls[0]![0])).toContain("unusable");
+      expect(String(written.mock.calls[0][0])).toContain("unusable");
     }
     finally
     {
